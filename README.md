@@ -163,9 +163,13 @@ expands with a synthetic alert and collapses after ~3.4 s. Then:
 3. **OverlayForegroundService** (native) — a `TYPE_APPLICATION_OVERLAY`
    window, not touchable (`FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL`), so all
    taps pass through. It posts the generic foreground notification (required
-   by Android), then on an alert it morphs the pill (64×40 → ≤320×56) via a
-   `ValueAnimator`, shows icon + app label + one text line, holds ~3.4 s,
-   collapses, and calls `clearContent()` (drop all references).
+   by Android). The idle pill is a slim **empty black capsule (60×34 dp)
+   positioned in place of the front camera** — it centers itself vertically on
+   the display-cutout camera rect (falling back to the status-bar band), and
+   its top is pinned there, so on an alert it morphs (60×34 → ≤320×56) via a
+   `ValueAnimator`, then fades in the app icon + label + one text line once the
+   pill has grown wide enough, holds ~3.4 s, collapses back to the camera-sized
+   capsule, and calls `clearContent()` (drop all references).
 
 4. **BootReceiver** (native) — on `BOOT_COMPLETED`/`MY_PACKAGE_REPLACED`,
    restarts the service **only if** the user's ON/OFF pref is ON and the

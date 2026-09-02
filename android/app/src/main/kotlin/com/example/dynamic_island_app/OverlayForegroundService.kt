@@ -28,6 +28,7 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.roundToInt
 
 /**
  * Foreground service that owns the floating "island" window.
@@ -227,8 +228,11 @@ class OverlayForegroundService : Service() {
             })
         }
 
-        compactWidthPx = dp(64)
-        compactHeightPx = dp(40)
+        // iPhone-style idle capsule: just large enough to wrap the front
+        // camera cutout. It is empty (black) when idle — content only
+        // appears while an alert is expanded.
+        compactWidthPx = dp(60)
+        compactHeightPx = dp(34)
         expandedHeightPx = dp(56)
         expandedWidthPx = computeExpandedWidth()
 
@@ -248,24 +252,32 @@ class OverlayForegroundService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = verticalTopInsetPx()
+            y = provisionalTopY()
+            // Let the island draw into the camera-cutout area and receive the
+            // cutout's bounding rects so it can center itself on the camera.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = cutoutModeForSdk()
+            }
         }
 
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val root = rootView!!
         windowManager?.addView(root, windowParams)
 
-        // Re-position after rotation / cutout changes.
+        // Position the island in place of the front camera, like on iPhone:
+        // horizontally centered, vertically centered on the camera cutout.
+        // Re-applied after rotation / cutout changes.
         root.setOnApplyWindowInsetsListener { _, insets ->
-            val top = insetTopOf(insets)
             windowParams?.let {
-                it.y = top
+                it.y = islandTopY(insets)
                 windowManager?.updateViewLayout(root, it)
             }
             insets
         }
 
-        textColumn.alpha = 0f // idle compact pill shows only the icon
+        // Idle: a plain black capsule around the camera — no content.
+        iconView.alpha = 0f
+        textColumn.alpha = 0f
     }
 
     private fun roundedRectBackground(color: Int, radiusPx: Int): GradientDrawable =
@@ -287,22 +299,69 @@ class OverlayForegroundService : Service() {
         return minOf(desired, metrics - dp(16))
     }
 
-    private fun verticalTopInsetPx(): Int {
-        // Best effort: status bar height (framework resource) + small margin.
+    /** Cutout mode allowing the island into the camera area (API-version safe). */
+    private fun cutoutModeForSdk(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
+
+    private fun statusBarHeightPx(): Int {
         val res = resources
         val id = res.getIdentifier("status_bar_height", "dimen", "android")
-        val statusBar = if (id > 0) res.getDimensionPixelSize(id) else dp(24)
-        return statusBar + dp(8)
+        return if (id > 0) res.getDimensionPixelSize(id) else dp(24)
     }
 
-    private fun insetTopOf(insets: WindowInsets): Int {
+    /** Best-effort top inset from a WindowInsets (API-version safe). */
+    @Suppress("DEPRECATION")
+    private fun topInsetOf(insets: WindowInsets): Int =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val systemBars = insets.getInsets(
+            insets.getInsets(
                 WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout()
-            )
-            if (systemBars.top > 0) return systemBars.top + dp(8)
+            ).top
+        } else {
+            insets.systemWindowInsetTop
         }
-        return verticalTopInsetPx()
+
+    /**
+     * Initial Y before the first real insets arrive: center the compact pill
+     * vertically in the status-bar band (the camera lives inside it).
+     */
+    private fun provisionalTopY(): Int =
+        ((statusBarHeightPx() - compactHeightPx) / 2).coerceAtLeast(dp(0))
+
+    /**
+     * Y position that puts the island "in place of the camera", like iPhone:
+     *
+     *  1. Preferred: center the pill vertically on the front-camera cutout
+     *     reported by the display cutout API (API 28+). The pill top stays
+     *     pinned to this Y while it expands, so it grows downward from the
+     *     camera exactly like the iPhone island.
+     *  2. Fallback (no cutout info): center the pill vertically in the top
+     *     inset band.
+     *
+     * The pill is always horizontally centered (the device's front camera is
+     * centered; for a corner/edge punch-hole this line would need adjusting).
+     */
+    private fun islandTopY(insets: WindowInsets): Int {
+        val params = windowParams
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && params != null) {
+            val rects = insets.displayCutout?.boundingRects
+            if (!rects.isNullOrEmpty()) {
+                // Top-most cutout = the front camera. Rects are delivered in
+                // this window's coordinate space.
+                val cutout = rects.minByOrNull { it.top }
+                if (cutout != null && cutout.height() in dp(6)..dp(64)) {
+                    val holeCenterY = params.y + cutout.exactCenterY()
+                    return (holeCenterY - compactHeightPx / 2f)
+                        .roundToInt()
+                        .coerceAtLeast(dp(0))
+                }
+            }
+        }
+        return ((topInsetOf(insets) - compactHeightPx) / 2).coerceAtLeast(dp(0))
     }
 
     // ------------------------------------------------------------------
@@ -320,10 +379,12 @@ class OverlayForegroundService : Service() {
         }
         val root = rootView ?: return
 
-        // Replace whatever is displayed: this alert becomes current.
-        currentAlert = alert
+        // Replace whatever is displayed: this alert becomes current. The new
+        // alert is assigned AFTER cancelling old animations, because a
+        // cancelled animator may synchronously run idle cleanup.
         main.removeCallbacks(hideRunnable)
         cancelAnimations()
+        currentAlert = alert
 
         iconView.setImageDrawable(alert.icon)
         appLabelView.text = alert.appLabel
@@ -331,7 +392,10 @@ class OverlayForegroundService : Service() {
 
         val params = windowParams ?: return
         if (!isExpanded) {
-            // Expand pill to content width/height.
+            // Expand the island around the camera. Content fades in only once
+            // the pill has grown past its own content size (iPhone-like) —
+            // start both hidden so nothing is clipped mid-expansion.
+            iconView.alpha = 0f
             textColumn.alpha = 0f
             animateShape(
                 fromW = params.width,
@@ -341,7 +405,9 @@ class OverlayForegroundService : Service() {
                 durationMs = EXPAND_MS,
                 interpolator = DecelerateInterpolator()
             )
-            fadeTextColumn(to = 1f, durationMs = 150L)
+            // ~60% through the expansion the capsule is wide enough for the
+            // 40dp icon, so fade the icon + text in from here.
+            fadeContent(to = 1f, startDelayMs = EXPAND_MS * 3 / 5)
             isExpanded = true
         } else {
             // Already expanded: just refresh content in place.
@@ -379,7 +445,7 @@ class OverlayForegroundService : Service() {
             durationMs = COLLAPSE_MS,
             interpolator = AccelerateInterpolator()
         )
-        fadeTextColumn(to = 0f, durationMs = 140L)
+        fadeContent(to = 0f, startDelayMs = 0L)
         isExpanded = false
     }
 
@@ -395,6 +461,8 @@ class OverlayForegroundService : Service() {
         iconView.setImageDrawable(null)
         appLabelView.text = ""
         bodyView.text = ""
+        iconView.alpha = 0f
+        textColumn.alpha = 0f
     }
 
     // ------------------------------------------------------------------
@@ -443,12 +511,14 @@ class OverlayForegroundService : Service() {
         animator.start()
     }
 
-    private fun fadeTextColumn(to: Float, durationMs: Long) {
+    private fun fadeContent(to: Float, startDelayMs: Long) {
         val set = AnimatorSet()
         set.playTogether(
+            ObjectAnimator.ofFloat(iconView, "alpha", iconView.alpha, to),
             ObjectAnimator.ofFloat(textColumn, "alpha", textColumn.alpha, to)
         )
-        set.duration = durationMs
+        set.duration = 150L
+        set.startDelay = startDelayMs
         fadeAnimator = set
         set.start()
     }

@@ -42,9 +42,11 @@ class AlertPreview {
 /// preview/demo and as readable documentation of the island's behavior.
 ///
 /// Behavior (identical to native):
-///  - idle:     small black pill (64 x 40)
-///  - alert in: expands to content width (<= 320 x 56), text fades in
-///  - 3.4 s later: collapses back to the compact pill, content cleared.
+///  - idle:     small empty black capsule (60 x 34), sitting where the
+///              front camera is, like the iPhone island
+///  - alert in: expands around the camera to content width (<= 320 x 56),
+///              then the app icon + text fade in
+///  - 3.4 s later: collapses back to the compact capsule, content cleared.
 class IslandPreview extends StatefulWidget {
   const IslandPreview({super.key, this.previewStream});
 
@@ -57,8 +59,8 @@ class IslandPreview extends StatefulWidget {
 
 class _IslandPreviewState extends State<IslandPreview>
     with SingleTickerProviderStateMixin {
-  static const double _compactW = 64;
-  static const double _compactH = 40;
+  static const double _compactW = 60;
+  static const double _compactH = 34;
   static const double _expandedW = 320;
   static const double _expandedH = 56;
   static const Duration _expandDuration = Duration(milliseconds: 220);
@@ -145,9 +147,10 @@ class _IslandPreviewState extends State<IslandPreview>
           final double h =
               lerpDouble(_compactH, _expandedH, value) ?? _compactH;
           final AlertPreview? alert = _current;
-          // Text fades in near the end of expansion and out early during
-          // collapse, so the morph reads like the native overlay.
-          final double textOpacity =
+          // The capsule stays empty (like the iPhone island) until it is wide
+          // enough for the content; icon + text fade in together near the end
+          // of the expansion and fade out as it collapses.
+          final double contentOpacity =
               ((value - 0.55) / 0.45).clamp(0.0, 1.0).toDouble();
 
           return ClipRRect(
@@ -158,15 +161,15 @@ class _IslandPreviewState extends State<IslandPreview>
               color: const Color(0xFF0B0B0F),
               child: alert == null
                   ? null
-                  : Padding(
-                      padding: const EdgeInsets.only(left: 12, right: 12),
-                      child: Row(
-                        children: [
-                          _AppIconBadge(appLabel: alert.appLabel),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Opacity(
-                              opacity: textOpacity,
+                  : Opacity(
+                      opacity: contentOpacity,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 12, right: 12),
+                        child: Row(
+                          children: [
+                            _AppIconBadge(appLabel: alert.appLabel),
+                            const SizedBox(width: 8),
+                            Expanded(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -196,8 +199,8 @@ class _IslandPreviewState extends State<IslandPreview>
                                 ],
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
             ),
