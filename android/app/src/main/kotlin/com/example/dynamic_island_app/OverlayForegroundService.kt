@@ -422,8 +422,12 @@ class OverlayForegroundService : Service() {
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    if (shapeAnimator === animation) shapeAnimator = null
-                    if (animation.isCanceled) return // superseded by a newer animation
+                    // Only the animator that currently owns the pill may
+                    // finalize the window size. A cancelled or superseded
+                    // animator (a newer alert/animation replaced this one)
+                    // must not touch the layout or trigger idle cleanup.
+                    if (shapeAnimator !== animation) return
+                    shapeAnimator = null
                     params.width = toW
                     params.height = toH
                     try {

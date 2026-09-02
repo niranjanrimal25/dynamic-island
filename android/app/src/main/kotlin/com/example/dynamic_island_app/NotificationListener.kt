@@ -3,7 +3,6 @@ package com.example.dynamic_island_app
 import android.app.Notification
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 
@@ -67,7 +66,7 @@ class NotificationListener : NotificationListenerService() {
             appLabel = appLabel,
             title = title,
             text = text,
-            icon = extractIcon(pm, sbn.notification, sbn.packageName)
+            icon = extractIcon(pm, sbn.packageName)
         )
 
         DynamicIsland.dispatchAlert(this, alert)
@@ -96,26 +95,19 @@ class NotificationListener : NotificationListenerService() {
         DynamicIsland.isNotificationAccessGranted(this)
 
     /**
-     * Icon selection (Drawable used only in memory by the overlay):
-     *  1. the sender's own "large icon" when it posts one (often an avatar /
-     *     conversation photo), otherwise
-     *  2. the app's launcher icon.
+     * The sender app's launcher icon (the "app icon" from the requirements),
+     * returned as a Drawable used only in memory by the overlay.
+     *
+     * Note: we deliberately do NOT read Notification.largeIcon here. That
+     * path goes through Icon.loadDrawable(...), whose behavior/availability
+     * varies across SDK levels; the launcher icon is the stable, requirement-
+     * matching choice and keeps this file compiling on every compileSdk.
      */
     private fun extractIcon(
         pm: PackageManager,
-        notification: Notification,
         pkg: String
-    ): Drawable? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val large = notification.largeIcon
-            if (large != null) {
-                val d = runCatching { large.loadDrawable(this) }.getOrNull()
-                if (d != null) return d
-            }
-        }
-        return runCatching {
-            val appInfo = pm.getApplicationInfo(pkg, 0)
-            pm.getApplicationIcon(appInfo)
-        }.getOrNull()
-    }
+    ): Drawable? = runCatching {
+        val appInfo = pm.getApplicationInfo(pkg, 0)
+        pm.getApplicationIcon(appInfo)
+    }.getOrNull()
 }
