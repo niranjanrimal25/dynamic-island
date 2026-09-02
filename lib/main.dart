@@ -16,7 +16,7 @@ class DynamicIslandApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Dynamic Island',
+      title: 'Isle',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
@@ -114,7 +114,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dynamic Island'),
+        title: const Text('Isle'),
         centerTitle: false,
       ),
       body: _loading
@@ -175,7 +175,7 @@ class _HomeScreenState extends State<HomeScreen>
       child: SwitchListTile(
         value: _status.overlayEnabled,
         onChanged: _busy ? null : _onToggle,
-        title: const Text('Show Dynamic Island'),
+        title: const Text('Show Isle'),
         subtitle: Text(
           _status.overlayEnabled
               ? (running
@@ -471,7 +471,7 @@ enum _SetupStep {
   ),
   notificationAccess(
     icon: Icons.notifications_active_outlined,
-    instruction: 'Turn on notification access for Dynamic Island so it can '
+    instruction: 'Turn on notification access for Isle so it can '
         'see incoming alerts.',
   ),
   postNotifications(

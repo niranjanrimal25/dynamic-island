@@ -92,7 +92,7 @@ class MainActivity : FlutterActivity() {
                         packageManager.getApplicationLabel(
                             packageManager.getApplicationInfo(packageName, 0)
                         ).toString()
-                    }.getOrDefault("Dynamic Island")
+                    }.getOrDefault("Isle")
                     val icon = runCatching {
                         packageManager.getApplicationIcon(packageName)
                     }.getOrNull()
@@ -103,7 +103,7 @@ class MainActivity : FlutterActivity() {
                             packageName = packageName,
                             appLabel = label,
                             title = "Test alert",
-                            text = "Dynamic Island is working",
+                            text = "Isle is working",
                             icon = icon
                         )
                     )

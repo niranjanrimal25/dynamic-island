@@ -1,4 +1,4 @@
-# Dynamic Island (personal, Android-only)
+# Isle — personal, Android-only Dynamic Island
 
 A **personal** Flutter + native Kotlin app for **one Android device** that
 mimics the iPhone Dynamic Island:
@@ -92,7 +92,7 @@ version with the "why" for each step.
 
 ### Step 0 — Launch & master switch
 
-Open **Dynamic Island** and flip **"Show Dynamic Island"** on.
+Open **Isle** and flip **"Show Isle"** on.
 The screen auto-opens the first permission you still need.
 
 ### Step 1 — "Display over other apps" (SYSTEM_ALERT_WINDOW)
@@ -101,7 +101,7 @@ Android has **no normal permission dialog** for overlays. It must be granted
 from a special settings page:
 
 - Settings → Apps → Special app access → **Display over other apps** →
-  find **Dynamic Island** → allow.
+  find **Isle** → allow.
 
 (Or press the **"Display over other apps"** row in the app, which deep-links
 there via `Settings.ACTION_MANAGE_OVERLAY_PERMISSION`.)
@@ -115,7 +115,7 @@ Reading other apps' notifications also has **no permission dialog**. It must
 be enabled manually:
 
 - Settings → Apps → Special app access → **Notification access** →
-  find **Dynamic Island notification access** → toggle ON.
+  find **Isle notification access** → toggle ON.
   (Android may warn that the app will be able to read all notifications —
   that is exactly what this feature needs, and the content never leaves RAM.)
 
@@ -133,7 +133,7 @@ works** — the service item is simply hidden.
 To reliably survive "app closed" and reboot:
 
 - Settings → Apps → Special app access → **Battery optimization** → choose
-  **Dynamic Island** → **Don't optimize**.
+  **Isle** → **Don't optimize**.
 
 The app can also raise the one-time `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
 dialog (button in-app). Without the exemption, aggressive vendors may kill the
@@ -144,7 +144,7 @@ service after you close the app.
 Press **"Show test alert"** in the app: the pill at the top of the screen
 expands with a synthetic alert and collapses after ~3.4 s. Then:
 1. Send yourself a real notification from another app.
-2. Swipe Dynamic Island away from Recents — send another notification.
+2. Swipe Isle away from Recents — send another notification.
 3. Reboot the phone — wait ~30 s — send another notification.
 
 ---

@@ -137,7 +137,7 @@ class _IslandPreviewState extends State<IslandPreview>
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Dynamic Island preview',
+      label: 'Isle preview',
       child: AnimatedBuilder(
         animation: _t,
         builder: (context, _) {

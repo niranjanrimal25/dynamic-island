@@ -28,7 +28,7 @@ class NotificationAlert(
 )
 
 /**
- * App-wide wiring for the Dynamic Island feature.
+ * App-wide wiring for the Isle dynamic-island feature.
  *
  * SECURITY MODEL (enforced everywhere in this app):
  *  - [NotificationAlert] objects live only in memory.

@@ -140,7 +140,7 @@ class OverlayForegroundService : Service() {
         builder
             .setSmallIcon(R.drawable.ic_stat_island)
             .setContentTitle("Notification overlay running")
-            .setContentText("Dynamic Island is active")
+            .setContentText("Isle is active")
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -170,10 +170,10 @@ class OverlayForegroundService : Service() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Dynamic Island overlay",
+            "Isle overlay",
             NotificationManager.IMPORTANCE_MIN
         ).apply {
-            description = "Keeps the floating Dynamic Island running"
+            description = "Keeps the floating Isle overlay running"
             setShowBadge(false)
         }
         val nm = getSystemService(NotificationManager::class.java)
