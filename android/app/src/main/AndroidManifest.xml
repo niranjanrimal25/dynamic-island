@@ -1,6 +1,36 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ================================================================
+         DYNAMIC ISLAND (personal, Android-only) — permissions
+         ================================================================
+         SECURITY NOTE: there is intentionally NO android.permission.INTERNET
+         in this main manifest. A release build of this app therefore has no
+         network capability at all, which structurally enforces the
+         "never transmit notification content" rule. -->
+
+    <!-- Draw the floating island above other apps.
+         Granted through Settings > Apps > Special app access > Display over
+         other apps (a settings redirect, NOT a normal runtime dialog). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+
+    <!-- Keep the overlay + listener alive after the app is closed. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- Android 14+ requires a declared foreground-service type. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+
+    <!-- Android 13+ runtime permission: lets the generic service notification
+         appear in the notification drawer. If denied, the overlay still runs
+         (the service notification is simply hidden by the OS). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- Restart the overlay service automatically after reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
+    <!-- Ask to be exempted from battery optimization (prompt once). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+
     <application
-        android:label="dynamic_island_app"
+        android:label="Dynamic Island"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -25,16 +55,63 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- ============================================================
+             Foreground service: owns the overlay window and stays alive
+             when the app UI is closed. stopWithTask=false means swiping the
+             app away from Recents does NOT stop it.
+             ============================================================ -->
+        <service
+            android:name=".OverlayForegroundService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="personal_on_device_notification_overlay_dynamic_island"/>
+        </service>
+
+        <!-- ============================================================
+             NotificationListenerService: receives a copy of every
+             notification the user allows this app to see. It must be bound
+             by the SYSTEM, so it needs BIND_NOTIFICATION_LISTENER_SERVICE +
+             exported=true. Enabled manually in Android Settings.
+             ============================================================ -->
+        <service
+            android:name=".NotificationListener"
+            android:exported="true"
+            android:label="Dynamic Island notification access"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService"/>
+            </intent-filter>
+        </service>
+
+        <!-- ============================================================
+             Boot receiver: restarts the overlay service after a reboot.
+             exported=true is required for the system to match this
+             implicit BOOT_COMPLETED broadcast (system UID is not "same app").
+             Only acts when the user previously switched the overlay ON.
+             ============================================================ -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
          https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
-
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
         <intent>

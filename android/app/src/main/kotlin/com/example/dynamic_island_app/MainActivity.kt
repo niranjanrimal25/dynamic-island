@@ -1,5 +1,196 @@
 package com.example.dynamic_island_app
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity()
+/**
+ * Flutter entry point. The MethodChannel/EventChannel plumbing below carries
+ * STATUS FLAGS and ALERT PREVIEW data between Dart and native.
+ *
+ * SECURITY:
+ *  - Only in-memory status flags and transient alert preview data flow over
+ *    the channels; nothing is persisted, logged, or transmitted.
+ *  - The always-on overlay is 100% native (see OverlayForegroundService /
+ *    NotificationListener). When this activity is closed, no Dart code is
+ *    involved at all: the native foreground service keeps rendering alerts
+ *    in the island window, so the feature works even when the app is closed
+ *    and after reboot.
+ */
+class MainActivity : FlutterActivity() {
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.dynamic_island_app/service"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getStatus" -> result.success(statusMap())
+                "setEnabled" -> {
+                    val on = call.argument<Boolean>("enabled") ?: false
+                    DynamicIsland.setOverlayEnabled(this, on)
+                    if (on) DynamicIsland.startOverlayService(this)
+                    else DynamicIsland.stopOverlayService(this)
+                    // Notify the UI (and any listener) that state changed.
+                    DynamicIsland.notifyStatusChanged()
+                    result.success(null)
+                }
+                "openOverlayPermissionSettings" -> {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    runCatching { startActivity(intent) }
+                    result.success(null)
+                }
+                "openNotificationAccessSettings" -> {
+                    val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    runCatching { startActivity(intent) }
+                    result.success(null)
+                }
+                "openBatteryOptimizationSettings" -> {
+                    // ACTION_REQUEST_... shows the one-time "Allow" dialog;
+                    // if the app is already exempt nothing appears and we
+                    // fall back to the full list screen.
+                    val alreadyExempt =
+                        DynamicIsland.isIgnoringBatteryOptimizations(this)
+                    if (!alreadyExempt && Build.VERSION.SDK_INT >= 23) {
+                        runCatching {
+                            startActivity(
+                                Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:$packageName")
+                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }.onFailure { openBatteryOptimizationList() }
+                    }
+                    result.success(alreadyExempt)
+                }
+                "openAppDetailsSettings" -> {
+                    val intent = Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName")
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    runCatching { startActivity(intent) }
+                    result.success(null)
+                }
+                "fireTestAlert" -> {
+                    // Dev/test helper: shows a synthetic alert (no real
+                    // notification is posted) so you can see the island
+                    // without waiting for another app. Synthetic content only.
+                    val label = runCatching {
+                        packageManager.getApplicationLabel(
+                            packageManager.getApplicationInfo(packageName, 0)
+                        ).toString()
+                    }.getOrDefault("Dynamic Island")
+                    val icon = runCatching {
+                        packageManager.getApplicationIcon(packageName)
+                    }.getOrNull()
+                    DynamicIsland.dispatchAlert(
+                        this,
+                        NotificationAlert(
+                            key = "test-${System.currentTimeMillis()}",
+                            packageName = packageName,
+                            appLabel = label,
+                            title = "Test alert",
+                            text = "Dynamic Island is working",
+                            icon = icon
+                        )
+                    )
+                    result.success(null)
+                }
+                "requestPostNotificationsPermission" -> {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        requestPermissions(
+                            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                            1001
+                        )
+                    }
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        // Stream of status-change notifications ("status" events). The Dart
+        // UI listens so the settings screen always reflects reality, e.g.
+        // after the user returns from the system permission screens.
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.dynamic_island_app/status_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                DynamicIsland.setStatusSink(events)
+                // Push current state as soon as the UI subscribes.
+                DynamicIsland.notifyStatusChanged()
+            }
+
+            override fun onCancel(arguments: Any?) {
+                DynamicIsland.setStatusSink(null)
+            }
+        })
+
+        // Stream of in-memory alert *previews*: when a notification arrives
+        // while the app UI is open, a copy of the alert summary is forwarded
+        // to Dart so the in-app island preview can mirror what the native
+        // overlay is showing. Only used for transient UI; never persisted.
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.dynamic_island_app/alert_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                DynamicIsland.setAlertSink(events)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                DynamicIsland.setAlertSink(null)
+            }
+        })
+    }
+
+    private fun statusMap(): Map<String, Any?> {
+        val postNotif = if (Build.VERSION.SDK_INT >= 33) {
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+        return mapOf(
+            "overlayEnabled" to DynamicIsland.isOverlayEnabled(this),
+            "overlayRunning" to DynamicIsland.isOverlayServiceRunning(),
+            "canDrawOverlays" to DynamicIsland.canDrawOverlays(this),
+            "notificationAccessGranted" to DynamicIsland.isNotificationAccessGranted(this),
+            "ignoringBatteryOptimizations" to
+                DynamicIsland.isIgnoringBatteryOptimizations(this),
+            "postNotificationsPermission" to postNotif
+        )
+    }
+
+    private fun openBatteryOptimizationList() {
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
+    override fun onDestroy() {
+        // This activity's engine is going away; stop pointing the native
+        // event sinks at its (now dead) messenger. The native overlay service
+        // is independent of Flutter and keeps running.
+        DynamicIsland.setStatusSink(null)
+        DynamicIsland.setAlertSink(null)
+        super.onDestroy()
+    }
+}

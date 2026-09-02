@@ -1,30 +1,59 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+import 'dart:async';
 
+import 'package:dynamic_island_app/src/island_preview.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamic_island_app/main.dart';
-
+/// Tests the island pill state machine with an injected fake alert stream
+/// (no platform channels involved).
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('idle pill expands on alert, then collapses and clears',
+      (tester) async {
+    final controller = StreamController<Map<String, dynamic>>();
+    addTearDown(controller.close);
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: IslandPreview(previewStream: controller.stream),
+          ),
+        ),
+      ),
+    );
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+    // Idle: compact pill, no text.
+    expect(find.text('Messages'), findsNothing);
+
+    // An alert arrives -> it expands and shows app + text.
+    controller.add(const {
+      'packageName': 'com.example.messenger',
+      'appLabel': 'Messages',
+      'title': 'New message',
+      'text': 'Hey, are you free tonight?',
+    });
+    await tester.pump(); // stream delivery
+    await tester.pump(const Duration(milliseconds: 250)); // expansion
+    expect(find.text('Messages'), findsOneWidget);
+    expect(find.text('Hey, are you free tonight?'), findsOneWidget);
+
+    // After the 3.4 s hold the pill starts collapsing; a little later the
+    // collapse finishes and the in-memory content is dropped.
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Messages'), findsNothing);
+    expect(find.text('Hey, are you free tonight?'), findsNothing);
+
+    // A second alert while idle works again.
+    controller.add(const {
+      'packageName': 'com.example.bank',
+      'appLabel': 'My Bank',
+      'title': 'Spending alert',
+      'text': 'You spent \$42.00 at Grocery Store',
+    });
     await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('My Bank'), findsOneWidget);
+    expect(find.text('You spent \$42.00 at Grocery Store'), findsOneWidget);
   });
 }
