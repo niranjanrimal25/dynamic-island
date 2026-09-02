@@ -6,8 +6,8 @@ mimics the iPhone Dynamic Island:
 - A floating, notch-style **pure-black pill overlay** near the top of the
   screen — it blends into the punch-hole camera when idle.
 - On a new notification it **expands** to show the app icon, app name and the
-  **full notification text** (multi-line — a whole email body fits; longer
-  texts stay on screen longer), then **collapses back**.
+  notification text wrapped over up to 4 compact lines (longer texts are
+  ellipsized and stay on screen longer), then **collapses back**.
 - **Every** notification in the shade is mirrored, including ongoing ones —
   minimize a music player and its track keeps showing in the island.
 - The pill never blocks touches — taps pass straight through to the app below.
@@ -171,11 +171,11 @@ Then:
    by Android). The idle pill is a slim **empty black capsule (60×34 dp)
    positioned in place of the front camera** — it centers itself vertically on
    the display-cutout camera rect (falling back to the status-bar band), and
-   its top is pinned there, so on an alert it morphs (60×34 → ≤320 wide,
-   height grows with the multi-line body, capped at 400 dp) via a
-   `ValueAnimator`, then fades in the app icon + label + the full text (up to
-   12 lines) once the pill has grown wide enough, holds a few seconds (longer
-   for longer text), collapses back to the camera-sized capsule, and calls
+   its top is pinned there, so on an alert it morphs (60×34 → ≤300 wide,
+   height grows with the body, capped at 160 dp) via a `ValueAnimator`, then
+   fades in the app icon + label + the text (up to 4 lines, ellipsized) once
+   the pill has grown wide enough, holds a few seconds (longer for longer
+   text), collapses back to the camera-sized capsule, and calls
    `clearContent()` (drop all references). Ongoing notifications (e.g. a
    minimized media player) are mirrored too.
 

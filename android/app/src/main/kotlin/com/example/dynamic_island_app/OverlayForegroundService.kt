@@ -56,14 +56,14 @@ class OverlayForegroundService : Service() {
         private const val COLLAPSE_MS = 260L
 
         /** Extra hold time per character of body text, capped. */
-        private const val HOLD_PER_CHAR_MS = 12L
-        private const val MAX_EXTRA_HOLD_MS = 6600L
+        private const val HOLD_PER_CHAR_MS = 8L
+        private const val MAX_EXTRA_HOLD_MS = 4000L
 
-        /** Body may wrap over this many lines (whole emails fit). */
-        private const val MAX_BODY_LINES = 12
+        /** Body wraps over at most this many lines, then ellipsizes. */
+        private const val MAX_BODY_LINES = 4
 
         /** Upper bound for the expanded pill height. */
-        private const val MAX_EXPANDED_HEIGHT_DP = 400
+        private const val MAX_EXPANDED_HEIGHT_DP = 160
 
         /** Non-null while this service is alive (guarded by @Volatile). */
         @Volatile
@@ -199,10 +199,13 @@ class OverlayForegroundService : Service() {
     private fun createWindow() {
         iconView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
-            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
-            background = roundedRectBackground(0xFF17171C.toInt(), dp(10))
+            // Transparent tile: the shape still rounds/clips the icon, but
+            // sender icons (and our own black logo) sit directly on the
+            // black pill with no visible box.
+            background = roundedRectBackground(0x00000000, dp(8))
         }
 
         appLabelView = TextView(this).apply {
@@ -212,9 +215,9 @@ class OverlayForegroundService : Service() {
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         bodyView = TextView(this).apply {
-            textSize = 14f
+            textSize = 13f
             setTextColor(0xFFFFFFFF.toInt())
-            // Multi-line so a full email / track list fits in the island.
+            // A few wrapped lines, then ellipsize — compact, iPhone-like.
             maxLines = MAX_BODY_LINES
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
@@ -235,7 +238,7 @@ class OverlayForegroundService : Service() {
             // Pure black so the pill is invisible against the punch-hole
             // camera when idle and reads as "the camera got wider" on alerts.
             background = roundedRectBackground(0xFF000000.toInt(), dp(22))
-            setPadding(dp(12), dp(0), dp(12), dp(0))
+            setPadding(dp(10), dp(0), dp(10), dp(0))
             addView(iconView)
             addView(textColumn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
                 // gap between icon and text
@@ -310,8 +313,8 @@ class OverlayForegroundService : Service() {
             @Suppress("DEPRECATION")
             resources.displayMetrics.widthPixels
         }
-        val desired = dp(320)
-        return minOf(desired, metrics - dp(16))
+        val desired = dp(300)
+        return minOf(desired, metrics - dp(28))
     }
 
     /** Cutout mode allowing the island into the camera area (API-version safe). */
@@ -454,7 +457,7 @@ class OverlayForegroundService : Service() {
      */
     private fun computeExpandedHeight(): Int {
         val contentWidth =
-            (expandedWidthPx - dp(24) - dp(40) - dp(8)).coerceAtLeast(dp(40))
+            (expandedWidthPx - dp(20) - dp(32) - dp(8)).coerceAtLeast(dp(40))
         val wSpec =
             View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.EXACTLY)
         val hSpec =
@@ -464,7 +467,7 @@ class OverlayForegroundService : Service() {
         val contentHeight = appLabelView.measuredHeight + bodyView.measuredHeight
         return maxOf(
             dp(56),
-            minOf(contentHeight + dp(20), dp(MAX_EXPANDED_HEIGHT_DP))
+            minOf(contentHeight + dp(16), dp(MAX_EXPANDED_HEIGHT_DP))
         )
     }
 

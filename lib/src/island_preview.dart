@@ -44,8 +44,8 @@ class AlertPreview {
 /// Behavior (identical to native):
 ///  - idle:     small empty pure-black capsule (60 x 34), sitting where the
 ///              front camera is so it blends with the punch hole
-///  - alert in: expands around the camera (<= 320 wide, height grows with the
-///              multi-line body — a full email makes it taller), then the app
+///  - alert in: expands around the camera (<= 300 wide, height grows with the
+///              body up to 4 compact lines, capped at 160), then the app
 ///              icon + text fade in; ongoing notifications (e.g. a minimized
 ///              music player) are mirrored too
 ///  - after a few seconds (longer for longer text): collapses back to the
@@ -64,10 +64,10 @@ class _IslandPreviewState extends State<IslandPreview>
     with SingleTickerProviderStateMixin {
   static const double _compactW = 60;
   static const double _compactH = 34;
-  static const double _expandedW = 320;
+  static const double _expandedW = 300;
   static const double _minExpandedH = 56;
-  static const double _maxExpandedH = 400;
-  static const int _maxBodyLines = 12;
+  static const double _maxExpandedH = 160;
+  static const int _maxBodyLines = 4;
   static const Duration _expandDuration = Duration(milliseconds: 220);
   static const Duration _baseHoldDuration = Duration(milliseconds: 3400);
   static const Duration _collapseDuration = Duration(milliseconds: 260);
@@ -79,7 +79,7 @@ class _IslandPreviewState extends State<IslandPreview>
     height: 1.2,
   );
   static const TextStyle _bodyStyle = TextStyle(
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: FontWeight.w400,
     color: Colors.white,
     height: 1.25,
@@ -133,7 +133,7 @@ class _IslandPreviewState extends State<IslandPreview>
       // Longer notifications stay on screen longer so they can be read.
       _hold = _baseHoldDuration +
           Duration(
-            milliseconds: (alert.summary.length * 12).clamp(0, 6600),
+            milliseconds: (alert.summary.length * 8).clamp(0, 4000),
           );
     });
     _hideTimer?.cancel();
@@ -157,7 +157,7 @@ class _IslandPreviewState extends State<IslandPreview>
   /// Mirrors the native overlay's content measurement: height that fits the
   /// label row plus the (multi-line) body, clamped to the pill's bounds.
   double _expandedHeightFor(AlertPreview alert) {
-    const double contentWidth = _expandedW - 24 - 40 - 8;
+    const double contentWidth = _expandedW - 20 - 32 - 8;
     final label = TextPainter(
       text: TextSpan(text: alert.appLabel, style: _labelStyle),
       maxLines: 1,
@@ -210,7 +210,7 @@ class _IslandPreviewState extends State<IslandPreview>
                   : Opacity(
                       opacity: contentOpacity,
                       child: Padding(
-                        padding: const EdgeInsets.only(left: 12, right: 12),
+                        padding: const EdgeInsets.only(left: 10, right: 10),
                         child: Row(
                           children: [
                             _AppIconBadge(appLabel: alert.appLabel),
@@ -266,21 +266,21 @@ class _AppIconBadge extends StatelessWidget {
     ];
     final Color tint = palette[appLabel.hashCode.abs() % palette.length];
     return Container(
-      width: 40,
-      height: 40,
+      width: 32,
+      height: 32,
       decoration: BoxDecoration(
         color: Color.alphaBlend(
           tint.withValues(alpha: 0.22),
           const Color(0xFF17171C),
         ),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
       ),
       alignment: Alignment.center,
       child: Text(
         appLabel.isEmpty ? '?' : appLabel.substring(0, 1).toUpperCase(),
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 18,
+          fontSize: 15,
           fontWeight: FontWeight.w600,
         ),
       ),
