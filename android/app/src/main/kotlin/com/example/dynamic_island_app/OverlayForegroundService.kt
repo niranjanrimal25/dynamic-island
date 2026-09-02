@@ -20,6 +20,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.view.Gravity
+import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.WindowInsets
 import android.view.WindowManager
@@ -48,10 +49,21 @@ class OverlayForegroundService : Service() {
         private const val CHANNEL_ID = "dynamic_island_service"
         private const val NOTIFICATION_ID = 9001
 
-        // Time budget: expand 220 ms, show ~3.4 s, collapse 260 ms.
+        // Time budget: expand 220 ms, hold ~3.4 s (longer for longer text),
+        // collapse 260 ms.
         private const val EXPAND_MS = 220L
         private const val HOLD_MS = 3400L
         private const val COLLAPSE_MS = 260L
+
+        /** Extra hold time per character of body text, capped. */
+        private const val HOLD_PER_CHAR_MS = 12L
+        private const val MAX_EXTRA_HOLD_MS = 6600L
+
+        /** Body may wrap over this many lines (whole emails fit). */
+        private const val MAX_BODY_LINES = 12
+
+        /** Upper bound for the expanded pill height. */
+        private const val MAX_EXPANDED_HEIGHT_DP = 400
 
         /** Non-null while this service is alive (guarded by @Volatile). */
         @Volatile
@@ -190,7 +202,7 @@ class OverlayForegroundService : Service() {
             layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
-            background = roundedRectBackground(0xFF1F1F28.toInt(), dp(10))
+            background = roundedRectBackground(0xFF17171C.toInt(), dp(10))
         }
 
         appLabelView = TextView(this).apply {
@@ -202,7 +214,8 @@ class OverlayForegroundService : Service() {
         bodyView = TextView(this).apply {
             textSize = 14f
             setTextColor(0xFFFFFFFF.toInt())
-            maxLines = 1
+            // Multi-line so a full email / track list fits in the island.
+            maxLines = MAX_BODY_LINES
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
 
@@ -219,7 +232,9 @@ class OverlayForegroundService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             clipToOutline = true
             outlineProvider = ViewOutlineProvider.BACKGROUND
-            background = roundedRectBackground(0xFF0B0B0F.toInt(), dp(22))
+            // Pure black so the pill is invisible against the punch-hole
+            // camera when idle and reads as "the camera got wider" on alerts.
+            background = roundedRectBackground(0xFF000000.toInt(), dp(22))
             setPadding(dp(12), dp(0), dp(12), dp(0))
             addView(iconView)
             addView(textColumn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
@@ -390,6 +405,10 @@ class OverlayForegroundService : Service() {
         appLabelView.text = alert.appLabel
         bodyView.text = alert.text.ifBlank { alert.title }
 
+        // Size the expanded pill to fit the whole (multi-line) body instead
+        // of using a fixed height — a full email gets a taller island.
+        expandedHeightPx = computeExpandedHeight()
+
         val params = windowParams ?: return
         if (!isExpanded) {
             // Expand the island around the camera. Content fades in only once
@@ -410,11 +429,43 @@ class OverlayForegroundService : Service() {
             fadeContent(to = 1f, startDelayMs = EXPAND_MS * 3 / 5)
             isExpanded = true
         } else {
-            // Already expanded: just refresh content in place.
-            windowManager?.updateViewLayout(root, params)
+            // Already expanded: refresh content and smoothly adapt the height
+            // (a longer notification grows the island further).
+            animateShape(
+                fromW = params.width,
+                fromH = params.height,
+                toW = expandedWidthPx,
+                toH = expandedHeightPx,
+                durationMs = EXPAND_MS,
+                interpolator = DecelerateInterpolator()
+            )
         }
 
-        main.postDelayed(hideRunnable, EXPAND_MS + HOLD_MS)
+        // Longer notifications stay on screen longer so they can be read.
+        val holdMs = HOLD_MS +
+            (alert.text.length * HOLD_PER_CHAR_MS).coerceAtMost(MAX_EXTRA_HOLD_MS)
+        main.postDelayed(hideRunnable, EXPAND_MS + holdMs)
+    }
+
+    /**
+     * Height that fits the icon row or the full multi-line body, whichever is
+     * taller (never below the classic 56 dp expanded pill, never above
+     * [MAX_EXPANDED_HEIGHT_DP] so the island can't swallow the screen).
+     */
+    private fun computeExpandedHeight(): Int {
+        val contentWidth =
+            (expandedWidthPx - dp(24) - dp(40) - dp(8)).coerceAtLeast(dp(40))
+        val wSpec =
+            View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.EXACTLY)
+        val hSpec =
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        appLabelView.measure(wSpec, hSpec)
+        bodyView.measure(wSpec, hSpec)
+        val contentHeight = appLabelView.measuredHeight + bodyView.measuredHeight
+        return maxOf(
+            dp(56),
+            minOf(contentHeight + dp(20), dp(MAX_EXPANDED_HEIGHT_DP))
+        )
     }
 
     /** Notification dismissed (or removed) in the shade / by its app. */

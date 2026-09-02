@@ -34,24 +34,39 @@ class NotificationListener : NotificationListenerService() {
 
         if (!DynamicIsland.isOverlayEnabled(this)) return
 
-        // Skip ongoing/task-foreground notifications (media players, download
-        // bars, other apps' foreground services). Delete this check if you
-        // want the island to also reflect ongoing items.
-        if (sbn.isOngoing) return
+        // Ongoing notifications (a minimized music player, download bars,
+        // other apps' foreground services) are intentionally INCLUDED: the
+        // island mirrors everything the shade shows, so minimizing a media
+        // player keeps surfacing its track info in the island.
 
         val extras = sbn.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)
             ?.toString()
             ?.trim()
             .orEmpty()
-        val text = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
+        // Longest available body first: big text (the full email body for
+        // Gmail), then inbox-style lines, then the regular text line.
+        val body = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
             ?.toString()
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
+            ?: extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+                ?.map { it.toString().trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.joinToString("\n")
+                ?.takeIf { it.isNotEmpty() }
             ?: extras.getCharSequence(Notification.EXTRA_TEXT)
                 ?.toString()
                 ?.trim()
                 .orEmpty()
+        // Fold the title into the body when it adds information (email
+        // sender/subject above the full text, track above artist, ...).
+        val text = when {
+            title.isEmpty() -> body
+            body.isEmpty() -> title
+            body == title -> body
+            else -> "$title\n$body"
+        }
 
         if (title.isEmpty() && text.isEmpty()) return
 

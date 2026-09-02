@@ -42,11 +42,14 @@ class AlertPreview {
 /// preview/demo and as readable documentation of the island's behavior.
 ///
 /// Behavior (identical to native):
-///  - idle:     small empty black capsule (60 x 34), sitting where the
-///              front camera is, like the iPhone island
-///  - alert in: expands around the camera to content width (<= 320 x 56),
-///              then the app icon + text fade in
-///  - 3.4 s later: collapses back to the compact capsule, content cleared.
+///  - idle:     small empty pure-black capsule (60 x 34), sitting where the
+///              front camera is so it blends with the punch hole
+///  - alert in: expands around the camera (<= 320 wide, height grows with the
+///              multi-line body — a full email makes it taller), then the app
+///              icon + text fade in; ongoing notifications (e.g. a minimized
+///              music player) are mirrored too
+///  - after a few seconds (longer for longer text): collapses back to the
+///              compact capsule, content cleared.
 class IslandPreview extends StatefulWidget {
   const IslandPreview({super.key, this.previewStream});
 
@@ -62,16 +65,33 @@ class _IslandPreviewState extends State<IslandPreview>
   static const double _compactW = 60;
   static const double _compactH = 34;
   static const double _expandedW = 320;
-  static const double _expandedH = 56;
+  static const double _minExpandedH = 56;
+  static const double _maxExpandedH = 400;
+  static const int _maxBodyLines = 12;
   static const Duration _expandDuration = Duration(milliseconds: 220);
-  static const Duration _holdDuration = Duration(milliseconds: 3400);
+  static const Duration _baseHoldDuration = Duration(milliseconds: 3400);
   static const Duration _collapseDuration = Duration(milliseconds: 260);
+
+  static const TextStyle _labelStyle = TextStyle(
+    fontSize: 11,
+    fontWeight: FontWeight.w500,
+    color: Color(0xFF9E9EA7),
+    height: 1.2,
+  );
+  static const TextStyle _bodyStyle = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w400,
+    color: Colors.white,
+    height: 1.25,
+  );
 
   late final AnimationController _size;
   late final Animation<double> _t;
   Timer? _hideTimer;
   StreamSubscription<Map<String, dynamic>>? _subscription;
   AlertPreview? _current;
+  double _targetExpandedH = _minExpandedH;
+  Duration _hold = _baseHoldDuration;
 
   @override
   void initState() {
@@ -107,7 +127,15 @@ class _IslandPreviewState extends State<IslandPreview>
   void _onAlert(Map<String, dynamic> map) {
     if (!mounted) return;
     final alert = AlertPreview.fromMap(map);
-    setState(() => _current = alert);
+    setState(() {
+      _current = alert;
+      _targetExpandedH = _expandedHeightFor(alert);
+      // Longer notifications stay on screen longer so they can be read.
+      _hold = _baseHoldDuration +
+          Duration(
+            milliseconds: (alert.summary.length * 12).clamp(0, 6600),
+          );
+    });
     _hideTimer?.cancel();
     if (_size.isCompleted) {
       _scheduleHide();
@@ -119,11 +147,29 @@ class _IslandPreviewState extends State<IslandPreview>
 
   void _scheduleHide() {
     _hideTimer?.cancel();
-    _hideTimer = Timer(_holdDuration, () {
+    _hideTimer = Timer(_hold, () {
       if (!mounted) return;
       _size.duration = _collapseDuration;
       _size.reverse();
     });
+  }
+
+  /// Mirrors the native overlay's content measurement: height that fits the
+  /// label row plus the (multi-line) body, clamped to the pill's bounds.
+  double _expandedHeightFor(AlertPreview alert) {
+    const double contentWidth = _expandedW - 24 - 40 - 8;
+    final label = TextPainter(
+      text: TextSpan(text: alert.appLabel, style: _labelStyle),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: contentWidth);
+    final body = TextPainter(
+      text: TextSpan(text: alert.summary, style: _bodyStyle),
+      maxLines: _maxBodyLines,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: contentWidth);
+    final double h = label.height + body.height + 20;
+    return h.clamp(_minExpandedH, _maxExpandedH).toDouble();
   }
 
   @override
@@ -145,7 +191,7 @@ class _IslandPreviewState extends State<IslandPreview>
           final double w =
               lerpDouble(_compactW, _expandedW, value) ?? _compactW;
           final double h =
-              lerpDouble(_compactH, _expandedH, value) ?? _compactH;
+              lerpDouble(_compactH, _targetExpandedH, value) ?? _compactH;
           final AlertPreview? alert = _current;
           // The capsule stays empty (like the iPhone island) until it is wide
           // enough for the content; icon + text fade in together near the end
@@ -158,7 +204,7 @@ class _IslandPreviewState extends State<IslandPreview>
             child: Container(
               width: w,
               height: h,
-              color: const Color(0xFF0B0B0F),
+              color: const Color(0xFF000000),
               child: alert == null
                   ? null
                   : Opacity(
@@ -178,23 +224,13 @@ class _IslandPreviewState extends State<IslandPreview>
                                     alert.appLabel,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
-                                      color: Color(0xFF9E9EA7),
-                                      height: 1.2,
-                                    ),
+                                    style: _labelStyle,
                                   ),
                                   Text(
                                     alert.summary,
-                                    maxLines: 1,
+                                    maxLines: _maxBodyLines,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: Colors.white,
-                                      height: 1.25,
-                                    ),
+                                    style: _bodyStyle,
                                   ),
                                 ],
                               ),
@@ -235,7 +271,7 @@ class _AppIconBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: Color.alphaBlend(
           tint.withValues(alpha: 0.22),
-          const Color(0xFF1F1F28),
+          const Color(0xFF17171C),
         ),
         borderRadius: BorderRadius.circular(10),
       ),

@@ -3,9 +3,13 @@
 A **personal** Flutter + native Kotlin app for **one Android device** that
 mimics the iPhone Dynamic Island:
 
-- A floating, notch-style **pill overlay** near the top of the screen.
-- On a new notification it **expands** to show the app icon, app name and
-  short text, then **collapses back** after ~3.4 s.
+- A floating, notch-style **pure-black pill overlay** near the top of the
+  screen — it blends into the punch-hole camera when idle.
+- On a new notification it **expands** to show the app icon, app name and the
+  **full notification text** (multi-line — a whole email body fits; longer
+  texts stay on screen longer), then **collapses back**.
+- **Every** notification in the shade is mirrored, including ongoing ones —
+  minimize a music player and its track keeps showing in the island.
 - The pill never blocks touches — taps pass straight through to the app below.
 - Works **when the app is fully closed** (foreground service) and **restarts
   after reboot** (BOOT_COMPLETED receiver).
@@ -142,7 +146,8 @@ service after you close the app.
 ### Step 5 — Verify
 
 Press **"Show test alert"** in the app: the pill at the top of the screen
-expands with a synthetic alert and collapses after ~3.4 s. Then:
+expands with a synthetic multi-line alert, holds a few seconds and collapses.
+Then:
 1. Send yourself a real notification from another app.
 2. Swipe Isle away from Recents — send another notification.
 3. Reboot the phone — wait ~30 s — send another notification.
@@ -166,10 +171,13 @@ expands with a synthetic alert and collapses after ~3.4 s. Then:
    by Android). The idle pill is a slim **empty black capsule (60×34 dp)
    positioned in place of the front camera** — it centers itself vertically on
    the display-cutout camera rect (falling back to the status-bar band), and
-   its top is pinned there, so on an alert it morphs (60×34 → ≤320×56) via a
-   `ValueAnimator`, then fades in the app icon + label + one text line once the
-   pill has grown wide enough, holds ~3.4 s, collapses back to the camera-sized
-   capsule, and calls `clearContent()` (drop all references).
+   its top is pinned there, so on an alert it morphs (60×34 → ≤320 wide,
+   height grows with the multi-line body, capped at 400 dp) via a
+   `ValueAnimator`, then fades in the app icon + label + the full text (up to
+   12 lines) once the pill has grown wide enough, holds a few seconds (longer
+   for longer text), collapses back to the camera-sized capsule, and calls
+   `clearContent()` (drop all references). Ongoing notifications (e.g. a
+   minimized media player) are mirrored too.
 
 4. **BootReceiver** (native) — on `BOOT_COMPLETED`/`MY_PACKAGE_REPLACED`,
    restarts the service **only if** the user's ON/OFF pref is ON and the

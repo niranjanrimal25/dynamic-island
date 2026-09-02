@@ -103,7 +103,10 @@ class MainActivity : FlutterActivity() {
                             packageName = packageName,
                             appLabel = label,
                             title = "Test alert",
-                            text = "Isle is working",
+                            text = "Isle is working\n" +
+                                "Longer notifications — like a whole email — " +
+                                "wrap over multiple lines and stay on screen " +
+                                "longer so you can read them.",
                             icon = icon
                         )
                     )
