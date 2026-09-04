@@ -1092,7 +1092,7 @@ class OverlayForegroundService : Service() {
                         formatElapsed(SystemClock.elapsedRealtime() - t.startedAtElapsedMs)
                 }
                 if (userExpanded && arcView.visibility == View.VISIBLE) {
-                    DynamicIsland.timerState?.let { arcView.progress = timerArcProgress(it) }
+                    arcView.progress = timerArcProgress(t)
                 }
             }
             else -> Unit
@@ -1339,13 +1339,14 @@ class OverlayForegroundService : Service() {
             style = android.graphics.Paint.Style.STROKE
             strokeCap = android.graphics.Paint.Cap.ROUND
         }
+        private val oval = android.graphics.RectF()
 
         override fun onDraw(canvas: android.graphics.Canvas) {
             val sw = dp(4).toFloat()
             bgPaint.strokeWidth = sw; fgPaint.strokeWidth = sw; fgPaint.color = arcColor
             val cx = width / 2f; val cy = height / 2f
-            val r = (minOf(width, height) / 2f) - sw
-            val oval = android.graphics.RectF(cx - r, cy - r, cx + r, cy + r)
+            val r = (minOf(width, height) / 2f) - sw / 2f
+            oval.set(cx - r, cy - r, cx + r, cy + r)
             canvas.drawArc(oval, -90f, 360f, false, bgPaint)
             if (progress > 0f) canvas.drawArc(oval, -90f, progress * 360f, false, fgPaint)
         }
