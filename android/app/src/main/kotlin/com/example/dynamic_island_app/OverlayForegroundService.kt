@@ -96,6 +96,10 @@ class OverlayForegroundService : Service() {
         /** How long the unlock flourish stays on the compact pill. */
         private const val UNLOCK_MS = 1400L
 
+        private const val FLASH_COMPACT_HOLD_MS = 500L
+        private const val FLASH_COMPACT_W_DP = 80
+        private const val FLASH_COMPACT_H_DP = 44
+
         /** Non-null while this service is alive (guarded by @Volatile). */
         @Volatile
         var instance: OverlayForegroundService? = null
@@ -138,14 +142,24 @@ class OverlayForegroundService : Service() {
      * app (tap-to-open).
      */
     private var flashArmed = false
+    private lateinit var labelRow: LinearLayout
+    private lateinit var timestampView: TextView
 
     /** Flash detail state: true = full body, false = compact icon pill. */
-    private var flashExpanded = true
+    private var flashExpanded = false
+    private var flashStartedAtMs = 0L
 
     private val flashArmedRunnable = Runnable {
         if (mode == Mode.FLASH) {
             flashArmed = true
             applyTouchability(true)
+        }
+    }
+
+    private val flashExpandRunnable = Runnable {
+        if (mode == Mode.FLASH) {
+            flashExpanded = true
+            render()
         }
     }
 
@@ -199,6 +213,7 @@ class OverlayForegroundService : Service() {
     private val easeCollapse: TimeInterpolator = AccelerateInterpolator()
 
     private val hideRunnable = Runnable {
+        main.removeCallbacks(flashExpandRunnable)
         currentAlert?.let { DynamicIsland.dropContentIntent(it.key) }
         currentAlert = null
         flashArmed = false
@@ -370,12 +385,36 @@ class OverlayForegroundService : Service() {
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
 
+        timestampView = TextView(this).apply {
+            textSize = 10f
+            setTextColor(0xFF6E6E76.toInt())
+            maxLines = 1
+            gravity = Gravity.END
+            visibility = View.GONE
+        }
+
+        labelRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            addView(
+                appLabelView,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            )
+            addView(timestampView)
+        }
+
         textColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
-            addView(appLabelView)
+            layoutParams = LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.MATCH_PARENT, 1f
+            )
+            addView(labelRow)
             addView(bodyView)
+            // mediaProgressBar added in Task 2
         }
 
         btnPrev = transportButton(R.drawable.ic_prev) {
@@ -436,30 +475,30 @@ class OverlayForegroundService : Service() {
             addView(unlockView)
             setOnClickListener {
                 when (mode) {
-                    // Tap any live mode to expand/collapse its detail view
-                    // (media keeps its transport controls).
                     Mode.MEDIA, Mode.CALL, Mode.TIMER -> {
                         userExpanded = !userExpanded
                         render()
                     }
-                    // Tap a flash (once armed) to toggle between the full
-                    // body and a compact icon pill. Long-press opens the
-                    // source app instead (tap-to-open).
-                    Mode.FLASH -> {
-                        if (flashArmed) {
-                            flashExpanded = !flashExpanded
+                    Mode.FLASH -> when {
+                        !flashExpanded -> {
+                            // Compact: skip wait, expand immediately
+                            main.removeCallbacks(flashExpandRunnable)
+                            main.removeCallbacks(flashArmedRunnable)
+                            flashExpanded = true
+                            flashArmed = false
+                            main.postDelayed(flashArmedRunnable, EXPAND_MS)
                             render()
                         }
+                        flashArmed -> {
+                            // Expanded + armed: open source app
+                            currentAlert?.let { a -> DynamicIsland.openAlert(a.key) }
+                        }
+                        // expanded but not yet armed — ignore
                     }
                     else -> Unit
                 }
             }
-            setOnLongClickListener {
-                if (mode == Mode.FLASH && flashArmed) {
-                    currentAlert?.let { a -> DynamicIsland.openAlert(a.key) }
-                    true
-                } else false
-            }
+            // Long-press removed: tap now handles open-app
         }
 
         // iPhone-style idle capsule: just large enough to wrap the front
@@ -660,19 +699,22 @@ class OverlayForegroundService : Service() {
         rootView ?: return
         main.removeCallbacks(hideRunnable)
         main.removeCallbacks(flashArmedRunnable)
+        main.removeCallbacks(flashExpandRunnable)
         cancelAnimations()
-        // The replaced alert's tap target is discarded immediately.
         currentAlert?.let { DynamicIsland.dropContentIntent(it.key) }
         currentAlert = alert
         flashArmed = false
-        flashExpanded = true
-        main.postDelayed(flashArmedRunnable, EXPAND_MS)
-        render(fromFlashStart = true)
+        flashExpanded = false
+        flashStartedAtMs = System.currentTimeMillis()
 
-        // Longer notifications stay on screen longer so they can be read.
+        render(fromFlashStart = true)   // compact pill appears immediately
+
+        main.postDelayed(flashExpandRunnable, FLASH_COMPACT_HOLD_MS)
+        main.postDelayed(flashArmedRunnable, FLASH_COMPACT_HOLD_MS + EXPAND_MS)
+
         val holdMs = HOLD_MS +
             (alert.text.length * HOLD_PER_CHAR_MS).coerceAtMost(MAX_EXTRA_HOLD_MS)
-        main.postDelayed(hideRunnable, EXPAND_MS + holdMs)
+        main.postDelayed(hideRunnable, FLASH_COMPACT_HOLD_MS + EXPAND_MS + holdMs)
     }
 
     /** Notification dismissed (or removed) in the shade / by its app. */
@@ -699,6 +741,7 @@ class OverlayForegroundService : Service() {
         }
         main.removeCallbacks(hideRunnable)
         main.removeCallbacks(flashArmedRunnable)
+        main.removeCallbacks(flashExpandRunnable)
         flashArmed = false
         currentAlert = null
         render()
@@ -780,7 +823,7 @@ class OverlayForegroundService : Service() {
         // Touches pass through unless something is interactive: persistent
         // modes always, a flash only once expanded (armed).
         applyTouchability(
-            mode.isPersistent() || (mode == Mode.FLASH && flashArmed)
+            mode.isPersistent() || mode == Mode.FLASH
         )
 
         // Live tickers & waveform follow the mode.
@@ -835,20 +878,25 @@ class OverlayForegroundService : Service() {
         iconView.scaleType = ImageView.ScaleType.CENTER_CROP
         iconView.imageTintList = null
         iconView.setImageDrawable(alert.icon)
-        if (flashExpanded) {
-            setIconSize(dp(32))
-            appLabelView.text = alert.appLabel
-            bodyView.maxLines = MAX_BODY_LINES
-            bodyView.text = alert.text.ifBlank { alert.title }
-            appLabelView.visibility = View.VISIBLE
-            textColumn.visibility = View.VISIBLE
-        } else {
-            // Compact: just the app icon pill; tap to expand again.
-            setIconSize(dp(28))
-            textColumn.visibility = View.GONE
-        }
         eqContainer.visibility = View.GONE
         controlsRow.visibility = View.GONE
+
+        if (flashExpanded) {
+            setIconSize(dp(36))
+            textColumn.visibility = View.VISIBLE
+            labelRow.visibility = View.VISIBLE
+            appLabelView.text = alert.appLabel
+            val elapsedSec = (System.currentTimeMillis() - flashStartedAtMs) / 1000L
+            timestampView.text = if (elapsedSec < 5L) "just now" else "${elapsedSec}s ago"
+            timestampView.visibility = View.VISIBLE
+            bodyView.textSize = 13f
+            bodyView.maxLines = MAX_BODY_LINES
+            bodyView.text = alert.text.ifBlank { alert.title }
+        } else {
+            setIconSize(dp(28))
+            textColumn.visibility = View.GONE
+            timestampView.visibility = View.GONE
+        }
     }
 
     private fun applyMediaContent() {
@@ -1077,7 +1125,7 @@ class OverlayForegroundService : Service() {
         bodyView.measure(wSpec, hSpec)
         val contentHeight = appLabelView.measuredHeight + bodyView.measuredHeight
         return maxOf(
-            dp(56),
+            dp(64),
             minOf(contentHeight + dp(16), dp(MAX_EXPANDED_HEIGHT_DP))
         )
     }
@@ -1088,6 +1136,7 @@ class OverlayForegroundService : Service() {
         eqContainer.alpha = alpha
         controlsRow.alpha = alpha
         unlockView.alpha = alpha
+        timestampView.alpha = alpha
     }
 
     /** SECURITY: drop the in-memory content once it is no longer visible. */
@@ -1162,7 +1211,8 @@ class OverlayForegroundService : Service() {
             ObjectAnimator.ofFloat(textColumn, "alpha", textColumn.alpha, to),
             ObjectAnimator.ofFloat(eqContainer, "alpha", eqContainer.alpha, to),
             ObjectAnimator.ofFloat(controlsRow, "alpha", controlsRow.alpha, to),
-            ObjectAnimator.ofFloat(unlockView, "alpha", unlockView.alpha, to)
+            ObjectAnimator.ofFloat(unlockView, "alpha", unlockView.alpha, to),
+            ObjectAnimator.ofFloat(timestampView, "alpha", timestampView.alpha, to)
         )
         set.duration = 150L
         set.startDelay = startDelayMs
