@@ -25,7 +25,7 @@ void main() {
     // Idle: compact pill, no text.
     expect(find.text('Messages'), findsNothing);
 
-    // An alert arrives -> it expands and shows app + text.
+    // An alert arrives -> compact pill first (500ms), then auto-expands and shows app + text.
     controller.add(const {
       'packageName': 'com.example.messenger',
       'appLabel': 'Messages',
@@ -33,7 +33,7 @@ void main() {
       'text': 'Hey, are you free tonight?',
     });
     await tester.pump(); // stream delivery
-    await tester.pump(const Duration(milliseconds: 250)); // expansion
+    await tester.pump(const Duration(milliseconds: 750)); // 500ms compact-hold + 220ms expand + margin
     expect(find.text('Messages'), findsOneWidget);
     expect(find.text('Hey, are you free tonight?'), findsOneWidget);
 
@@ -53,7 +53,7 @@ void main() {
       'text': 'You spent \$42.00 at Grocery Store',
     });
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump(const Duration(milliseconds: 750)); // 500ms compact-hold + 220ms expand + margin
     expect(find.text('My Bank'), findsOneWidget);
     expect(find.text('You spent \$42.00 at Grocery Store'), findsOneWidget);
   });
