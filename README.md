@@ -235,6 +235,16 @@ top of a secure (PIN/pattern/biometric) lock screen — an OS-level guarantee
 this app respects and does not try to bypass (no `FLAG_SHOW_WHEN_LOCKED`).
 The island reappears the moment the phone is unlocked.
 
+5. **Unlock flourish** — the service registers a receiver for
+   `ACTION_USER_PRESENT`, the standard broadcast fired when the device
+   becomes unlocked & interactive (regardless of method; Android does not
+   let apps observe *how* it was unlocked, and this app never touches
+   biometric APIs). On it, the compact pill shows a pulsing open-lock glyph
+   for ~1.4 s and then reverts to whatever was underneath (idle, media,
+   call, timer) — another temporary interrupt in the same pattern as the
+   notification flash, and it can only play after unlock since the OS hides
+   the overlay on the secure lock screen.
+
 ### Why there are two "islands"
 
 The always-on island is the native Kotlin window above — it works with zero

@@ -11,8 +11,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.ColorStateList
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -91,13 +93,16 @@ class OverlayForegroundService : Service() {
         /** Live tick for the call / timer readouts. */
         private const val TICK_MS = 250L
 
+        /** How long the unlock flourish stays on the compact pill. */
+        private const val UNLOCK_MS = 1400L
+
         /** Non-null while this service is alive (guarded by @Volatile). */
         @Volatile
         var instance: OverlayForegroundService? = null
             private set
     }
 
-    private enum class Mode { IDLE, FLASH, MEDIA, CALL, TIMER }
+    private enum class Mode { IDLE, FLASH, UNLOCK, MEDIA, CALL, TIMER }
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -106,6 +111,7 @@ class OverlayForegroundService : Service() {
     private var windowParams: WindowManager.LayoutParams? = null
 
     private lateinit var iconView: ImageView
+    private lateinit var unlockView: ImageView
     private lateinit var eqContainer: LinearLayout
     private lateinit var eqBars: List<View>
     private lateinit var appLabelView: TextView
@@ -142,7 +148,41 @@ class OverlayForegroundService : Service() {
     private var shapeAnimator: ValueAnimator? = null
     private var fadeAnimator: AnimatorSet? = null
     private var eqAnimator: ValueAnimator? = null
+    private var unlockPulse: ValueAnimator? = null
     private var tickerOn = false
+
+    /** True between ACTION_USER_PRESENT and the end of the flourish. */
+    private var unlockActive = false
+
+    private val unlockEndRunnable = Runnable {
+        unlockActive = false
+        render()
+    }
+
+    /**
+     * Unlock flourish trigger. ACTION_USER_PRESENT fires the moment the
+     * device becomes unlocked & interactive, regardless of the unlock method
+     * (Android deliberately does not let apps observe WHICH method was
+     * used). The overlay window is hidden by the OS on a secure lock screen,
+     * so this can only ever play after unlock — no lock-screen bypass, no
+     * biometric APIs.
+     */
+    private val unlockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) showUnlock()
+        }
+    }
+
+    private fun showUnlock() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { showUnlock() }
+            return
+        }
+        unlockActive = true
+        main.removeCallbacks(unlockEndRunnable)
+        main.postDelayed(unlockEndRunnable, UNLOCK_MS)
+        render()
+    }
 
     /** Spring-like expand (slight overshoot, iOS-island feel). */
     private val springExpand: TimeInterpolator =
@@ -174,6 +214,8 @@ class OverlayForegroundService : Service() {
         instance = this
         createNotificationChannel()
         createWindow()
+        // Standard, public unlock broadcast — fires after ANY unlock method.
+        registerReceiver(unlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
         IslandMediaTracker.start(this)
         IslandCallTracker.start(this)
         refresh()
@@ -206,6 +248,8 @@ class OverlayForegroundService : Service() {
         main.removeCallbacksAndMessages(null)
         cancelAnimations()
         stopEq()
+        stopUnlockPulse()
+        runCatching { unregisterReceiver(unlockReceiver) }
         // SECURITY: never outlive the window with stored tap targets.
         DynamicIsland.dropAllContentIntents()
         IslandMediaTracker.stop(this)
@@ -352,6 +396,18 @@ class OverlayForegroundService : Service() {
             addView(btnNext)
         }
 
+        // Unlock flourish glyph (pulsing open-lock, Face-ID-dots spirit).
+        unlockView = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setImageResource(R.drawable.ic_unlock)
+            imageTintList = ColorStateList.valueOf(0xFF7ED6DF.toInt())
+            visibility = View.GONE
+        }
+
         rootView = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -368,6 +424,7 @@ class OverlayForegroundService : Service() {
                 marginStart = dp(8)
             })
             addView(controlsRow)
+            addView(unlockView)
             setOnClickListener {
                 when (mode) {
                     // Tap a persistent mode to expand/collapse its detail
@@ -560,6 +617,7 @@ class OverlayForegroundService : Service() {
      */
     private fun targetMode(): Mode = when {
         currentAlert != null -> Mode.FLASH
+        unlockActive -> Mode.UNLOCK
         DynamicIsland.callStartedAtElapsedMs != null -> Mode.CALL
         DynamicIsland.timerState != null -> Mode.TIMER
         DynamicIsland.mediaState != null -> Mode.MEDIA
@@ -648,8 +706,16 @@ class OverlayForegroundService : Service() {
         // Target geometry + content per mode.
         val targetW: Int
         val targetH: Int
+        // Default: flourish hidden; applyUnlockContent() re-shows it.
+        unlockView.visibility = View.GONE
+        stopUnlockPulse()
         when (mode) {
             Mode.IDLE -> {
+                targetW = compactWidthPx
+                targetH = compactHeightPx
+            }
+            Mode.UNLOCK -> {
+                applyUnlockContent()
                 targetW = compactWidthPx
                 targetH = compactHeightPx
             }
@@ -732,8 +798,19 @@ class OverlayForegroundService : Service() {
         iconView.layoutParams = lp
     }
 
+    /** Pulsing open-lock glyph in the compact pill for ~UNLOCK_MS. */
+    private fun applyUnlockContent() {
+        iconView.visibility = View.GONE
+        textColumn.visibility = View.GONE
+        eqContainer.visibility = View.GONE
+        controlsRow.visibility = View.GONE
+        unlockView.visibility = View.VISIBLE
+        startUnlockPulse()
+    }
+
     private fun applyFlashContent() {
         val alert = currentAlert ?: return
+        iconView.visibility = View.VISIBLE
         setIconSize(dp(32))
         iconView.scaleType = ImageView.ScaleType.CENTER_CROP
         iconView.imageTintList = null
@@ -749,6 +826,7 @@ class OverlayForegroundService : Service() {
 
     private fun applyMediaContent() {
         val media = DynamicIsland.mediaState ?: return
+        iconView.visibility = View.VISIBLE
         if (userExpanded) {
             setIconSize(dp(48))
             textColumn.visibility = View.VISIBLE
@@ -777,6 +855,7 @@ class OverlayForegroundService : Service() {
     }
 
     private fun applyCallContent() {
+        iconView.visibility = View.VISIBLE
         setIconSize(if (userExpanded) dp(22) else dp(18))
         iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
         iconView.imageTintList = ColorStateList.valueOf(0xFF30D158.toInt())
@@ -796,6 +875,7 @@ class OverlayForegroundService : Service() {
     }
 
     private fun applyTimerContent() {
+        iconView.visibility = View.VISIBLE
         setIconSize(if (userExpanded) dp(22) else dp(18))
         iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
         iconView.imageTintList = ColorStateList.valueOf(0xFFFFD60A.toInt())
@@ -903,6 +983,31 @@ class OverlayForegroundService : Service() {
         }
     }
 
+    /** Gentle scale pulse for the unlock glyph (iPhone-unlock spirit). */
+    private fun startUnlockPulse() {
+        if (unlockPulse != null) return
+        unlockPulse = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 700
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.RESTART
+            addUpdateListener { a ->
+                val t = ((a.animatedValue as Float).toDouble() * PI)
+                val scale = (0.85 + 0.25 * abs(sin(t))).toFloat()
+                unlockView.scaleX = scale
+                unlockView.scaleY = scale
+            }
+        }.also { it.start() }
+    }
+
+    private fun stopUnlockPulse() {
+        unlockPulse?.cancel()
+        unlockPulse = null
+        if (::unlockView.isInitialized) {
+            unlockView.scaleX = 1f
+            unlockView.scaleY = 1f
+        }
+    }
+
     // -- window plumbing ---------------------------------------------------
 
     private fun applyTouchability(touchable: Boolean) {
@@ -946,6 +1051,7 @@ class OverlayForegroundService : Service() {
         textColumn.alpha = alpha
         eqContainer.alpha = alpha
         controlsRow.alpha = alpha
+        unlockView.alpha = alpha
     }
 
     /** SECURITY: drop the in-memory content once it is no longer visible. */
@@ -958,7 +1064,9 @@ class OverlayForegroundService : Service() {
         setContentAlpha(0f)
         eqContainer.visibility = View.GONE
         controlsRow.visibility = View.GONE
+        unlockView.visibility = View.GONE
         stopEq()
+        stopUnlockPulse()
     }
 
     // ------------------------------------------------------------------
@@ -1017,7 +1125,8 @@ class OverlayForegroundService : Service() {
             ObjectAnimator.ofFloat(iconView, "alpha", iconView.alpha, to),
             ObjectAnimator.ofFloat(textColumn, "alpha", textColumn.alpha, to),
             ObjectAnimator.ofFloat(eqContainer, "alpha", eqContainer.alpha, to),
-            ObjectAnimator.ofFloat(controlsRow, "alpha", controlsRow.alpha, to)
+            ObjectAnimator.ofFloat(controlsRow, "alpha", controlsRow.alpha, to),
+            ObjectAnimator.ofFloat(unlockView, "alpha", unlockView.alpha, to)
         )
         set.duration = 150L
         set.startDelay = startDelayMs
