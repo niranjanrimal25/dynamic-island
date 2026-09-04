@@ -1290,7 +1290,7 @@ class OverlayForegroundService : Service() {
     private fun fadeContent(to: Float, startDelayMs: Long) {
         val fromTransY = if (to == 1f) dp(8).toFloat() else 0f
         val views = listOf(iconView, textColumn, eqContainer, controlsRow,
-                           unlockView, arcView, mediaProgressBar)
+                           unlockView, arcView, mediaProgressBar, timestampView)
         val anims = views.flatMap { v ->
             listOf(
                 ObjectAnimator.ofFloat(v, "alpha", v.alpha, to),
