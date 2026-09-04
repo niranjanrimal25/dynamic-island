@@ -150,6 +150,8 @@ object DynamicIsland {
     fun onLiveStateChanged() {
         OverlayForegroundService.instance?.refresh()
         forwardMediaState()
+        forwardTimerState()
+        forwardCallState()
         notifyStatusChanged()
     }
 
@@ -219,6 +221,33 @@ object DynamicIsland {
     // in-memory PNG byte array that Dart renders straight from memory.
     @Volatile
     private var mediaSink: EventChannel.EventSink? = null
+    @Volatile private var timerSink: EventChannel.EventSink? = null
+    @Volatile private var callSink: EventChannel.EventSink? = null
+
+    fun setTimerSink(sink: EventChannel.EventSink?) { timerSink = sink }
+    fun setCallSink(sink: EventChannel.EventSink?) { callSink = sink }
+
+    fun forwardTimerState() {
+        val sink = timerSink ?: return
+        val t = timerState
+        val payload: Map<String, Any?>? = if (t == null) null else {
+            val elapsed = android.os.SystemClock.elapsedRealtime() - t.startedAtElapsedMs
+            mapOf(
+                "kind" to if (t.kind == TimerKind.COUNTDOWN) "countdown" else "stopwatch",
+                "positionMs" to elapsed,
+                "durationMs" to t.durationMs
+            )
+        }
+        mainHandler.post { sink.success(payload) }
+    }
+
+    fun forwardCallState() {
+        val sink = callSink ?: return
+        val start = callStartedAtElapsedMs
+        val payload: Map<String, Any?>? = if (start == null) null else
+            mapOf("elapsedMs" to (android.os.SystemClock.elapsedRealtime() - start))
+        mainHandler.post { sink.success(payload) }
+    }
 
     fun setMediaSink(sink: EventChannel.EventSink?) {
         mediaSink = sink

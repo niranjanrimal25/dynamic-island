@@ -243,6 +243,28 @@ class MainActivity : FlutterActivity() {
                 DynamicIsland.setMediaSink(null)
             }
         })
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.dynamic_island_app/timer_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                DynamicIsland.setTimerSink(events)
+                DynamicIsland.forwardTimerState()
+            }
+            override fun onCancel(arguments: Any?) = DynamicIsland.setTimerSink(null)
+        })
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.dynamic_island_app/call_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                DynamicIsland.setCallSink(events)
+                DynamicIsland.forwardCallState()
+            }
+            override fun onCancel(arguments: Any?) = DynamicIsland.setCallSink(null)
+        })
     }
 
     private fun statusMap(): Map<String, Any?> {
@@ -305,6 +327,8 @@ class MainActivity : FlutterActivity() {
         // is independent of Flutter and keeps running.
         DynamicIsland.setStatusSink(null)
         DynamicIsland.setAlertSink(null)
+        DynamicIsland.setTimerSink(null)
+        DynamicIsland.setCallSink(null)
         super.onDestroy()
     }
 }

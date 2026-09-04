@@ -1076,6 +1076,7 @@ class OverlayForegroundService : Service() {
             Mode.CALL -> {
                 val start = DynamicIsland.callStartedAtElapsedMs ?: return
                 bodyView.text = formatElapsed(SystemClock.elapsedRealtime() - start)
+                DynamicIsland.forwardCallState()
             }
             Mode.TIMER -> {
                 val t = DynamicIsland.timerState ?: return
@@ -1094,6 +1095,7 @@ class OverlayForegroundService : Service() {
                 if (userExpanded && arcView.visibility == View.VISIBLE) {
                     arcView.progress = timerArcProgress(t)
                 }
+                DynamicIsland.forwardTimerState()
             }
             else -> Unit
         }

@@ -91,6 +91,10 @@ class NativeBridge {
       EventChannel('com.example.dynamic_island_app/alert_events');
   static const EventChannel _mediaEvents =
       EventChannel('com.example.dynamic_island_app/media_events');
+  static const EventChannel _timerEvents =
+      EventChannel('com.example.dynamic_island_app/timer_events');
+  static const EventChannel _callEvents =
+      EventChannel('com.example.dynamic_island_app/call_events');
 
   static Future<IslandStatus> fetchStatus() async {
     final map = await _service.invokeMapMethod<dynamic, dynamic>('getStatus');
@@ -178,6 +182,16 @@ class NativeBridge {
   /// the art bytes are rendered straight from RAM, never written to disk.
   static Stream<Map<String, dynamic>?> mediaEvents() =>
       _mediaEvents.receiveBroadcastStream().map(
+            (e) => (e as Map?)?.cast<String, dynamic>(),
+          );
+
+  static Stream<Map<String, dynamic>?> timerEvents() =>
+      _timerEvents.receiveBroadcastStream().map(
+            (e) => (e as Map?)?.cast<String, dynamic>(),
+          );
+
+  static Stream<Map<String, dynamic>?> callEvents() =>
+      _callEvents.receiveBroadcastStream().map(
             (e) => (e as Map?)?.cast<String, dynamic>(),
           );
 

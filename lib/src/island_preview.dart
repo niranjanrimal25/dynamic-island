@@ -92,13 +92,25 @@ class MediaPreview {
 ///              state underneath; starts compact then auto-expands after 500ms
 ///  - springs:  expand uses an overshooting curve (iOS-island feel)
 class IslandPreview extends StatefulWidget {
-  const IslandPreview({super.key, this.previewStream, this.mediaStream});
+  const IslandPreview({
+    super.key,
+    this.previewStream,
+    this.mediaStream,
+    this.timerStream,
+    this.callStream,
+  });
 
   /// Overridable for tests; defaults to the live native alert stream.
   final Stream<Map<String, dynamic>>? previewStream;
 
   /// Overridable for tests; defaults to the live native media stream.
   final Stream<Map<String, dynamic>?>? mediaStream;
+
+  /// Overridable for tests; defaults to the live native timer stream.
+  final Stream<Map<String, dynamic>?>? timerStream;
+
+  /// Overridable for tests; defaults to the live native call stream.
+  final Stream<Map<String, dynamic>?>? callStream;
 
   @override
   State<IslandPreview> createState() => _IslandPreviewState();
@@ -140,6 +152,12 @@ class _IslandPreviewState extends State<IslandPreview>
   AlertPreview? _current;
   MediaPreview? _media;
   bool _mediaExpanded = false;
+  Map<String, dynamic>? _timerData;
+  Map<String, dynamic>? _callData;
+  bool _timerExpanded = false;
+  bool _callExpanded = false;
+  StreamSubscription<Map<String, dynamic>?>? _timerSub;
+  StreamSubscription<Map<String, dynamic>?>? _callSub;
 
   /// A flash becomes tappable (tap-to-open) only once expanded, mirroring
   /// the native overlay's arming delay.
@@ -174,6 +192,22 @@ class _IslandPreviewState extends State<IslandPreview>
         // Ignore: same as above.
       },
     );
+    _timerSub = (widget.timerStream ?? NativeBridge.timerEvents()).listen(
+      (data) {
+        if (!mounted) return;
+        setState(() { _timerData = data; if (data == null) _timerExpanded = false; });
+        if (_current == null && _media == null) _retarget();
+      },
+      onError: (Object _, StackTrace _) {},
+    );
+    _callSub = (widget.callStream ?? NativeBridge.callEvents()).listen(
+      (data) {
+        if (!mounted) return;
+        setState(() { _callData = data; if (data == null) _callExpanded = false; });
+        if (_current == null && _media == null) _retarget();
+      },
+      onError: (Object _, StackTrace _) {},
+    );
   }
 
   double get _nowW => lerpDouble(_fromW, _toW, _t.value) ?? _toW;
@@ -192,12 +226,13 @@ class _IslandPreviewState extends State<IslandPreview>
     if (_current != null) {
       _animateTo(_flashExpanded ? _expandedW : 80,
                  _flashExpanded ? _flashHeight(_current!) : 44);
+    } else if (_callData != null) {
+      _animateTo(_callExpanded ? _expandedW : 118, _callExpanded ? 80 : 40);
+    } else if (_timerData != null) {
+      _animateTo(_timerExpanded ? _expandedW : 118, _timerExpanded ? 110 : 40);
     } else if (_media != null) {
-      if (_mediaExpanded) {
-        _animateTo(_expandedW, _mediaExpandedH);
-      } else {
-        _animateTo(_mediaCompactW, _mediaCompactH);
-      }
+      _animateTo(_mediaExpanded ? _expandedW : _mediaCompactW,
+                 _mediaExpanded ? _mediaExpandedH : _mediaCompactH);
     } else {
       _animateTo(_compactW, _compactH);
     }
@@ -263,19 +298,19 @@ class _IslandPreviewState extends State<IslandPreview>
   void _onTap() {
     if (_current != null) {
       if (!_flashExpanded) {
-        _flashExpandTimer?.cancel();
-        _armTimer?.cancel();
+        _flashExpandTimer?.cancel(); _armTimer?.cancel();
         setState(() { _flashExpanded = true; _flashArmed = false; });
         _retarget();
         _armTimer = Timer(_animDuration, () {
           if (mounted) setState(() => _flashArmed = true);
         });
-      } else if (_flashArmed) {
-        _onFlashTap();
-      }
+      } else if (_flashArmed) { _onFlashTap(); }
+    } else if (_callData != null) {
+      setState(() => _callExpanded = !_callExpanded); _retarget();
+    } else if (_timerData != null) {
+      setState(() => _timerExpanded = !_timerExpanded); _retarget();
     } else if (_media != null) {
-      setState(() => _mediaExpanded = !_mediaExpanded);
-      _retarget();
+      setState(() => _mediaExpanded = !_mediaExpanded); _retarget();
     }
   }
 
@@ -316,6 +351,8 @@ class _IslandPreviewState extends State<IslandPreview>
     _armTimer?.cancel();
     _alertSub?.cancel();
     _mediaSub?.cancel();
+    _timerSub?.cancel();
+    _callSub?.cancel();
     _size.dispose();
     super.dispose();
   }
@@ -329,7 +366,8 @@ class _IslandPreviewState extends State<IslandPreview>
         builder: (context, _) {
           final double w = _nowW;
           final double h = _nowH;
-          final bool interactive = _current != null || _media != null;
+          final bool interactive =
+              _current != null || _callData != null || _timerData != null || _media != null;
           return GestureDetector(
             onTap: interactive ? _onTap : null,
             child: ClipRRect(
@@ -340,11 +378,19 @@ class _IslandPreviewState extends State<IslandPreview>
                 color: const Color(0xFF000000),
                 child: _current != null
                     ? _withSlideIn(_flashContent(_current!))
-                    : _media != null
-                        ? _withSlideIn(_mediaExpanded
-                            ? _mediaExpandedContent(_media!)
-                            : _mediaCompactContent(_media!))
-                        : null,
+                    : _callData != null
+                        ? _withSlideIn(_callExpanded
+                            ? _callExpandedContent(_callData!)
+                            : _callCompactContent(_callData!))
+                        : _timerData != null
+                            ? _withSlideIn(_timerExpanded
+                                ? _timerExpandedContent(_timerData!)
+                                : _timerCompactContent(_timerData!))
+                            : _media != null
+                                ? _withSlideIn(_mediaExpanded
+                                    ? _mediaExpandedContent(_media!)
+                                    : _mediaCompactContent(_media!))
+                                : null,
               ),
             ),
           );
@@ -468,6 +514,104 @@ class _IslandPreviewState extends State<IslandPreview>
       ),
     );
   }
+
+  String _formatElapsed(int ms) {
+    final total = (ms / 1000).round().clamp(0, 359999);
+    final h = total ~/ 3600;
+    final m = (total % 3600) ~/ 60;
+    final s = total % 60;
+    if (h > 0) return '$h:${m.toString().padLeft(2,'0')}:${s.toString().padLeft(2,'0')}';
+    return '$m:${s.toString().padLeft(2,'0')}';
+  }
+
+  Widget _callCompactContent(Map<String, dynamic> data) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.call, color: Color(0xFF30D158), size: 18),
+        const SizedBox(width: 6),
+        Text(_formatElapsed((data['elapsedMs'] as int?) ?? 0),
+            style: const TextStyle(color: Colors.white, fontSize: 13)),
+      ]),
+    );
+  }
+
+  Widget _callExpandedContent(Map<String, dynamic> data) {
+    return Row(children: [
+      Container(width: 3, color: const Color(0xFF30D158)),
+      const SizedBox(width: 10),
+      const Icon(Icons.call, color: Color(0xFF30D158), size: 24),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Call', style: TextStyle(fontSize: 11, color: Color(0xFF9E9EA7))),
+            Text(_formatElapsed((data['elapsedMs'] as int?) ?? 0),
+                style: const TextStyle(color: Colors.white, fontSize: 20,
+                                       fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    ]);
+  }
+
+  Widget _timerCompactContent(Map<String, dynamic> data) {
+    final kind = (data['kind'] as String?) ?? 'countdown';
+    final posMs = (data['positionMs'] as int?) ?? 0;
+    final durMs = (data['durationMs'] as int?) ?? 0;
+    final display = kind == 'countdown' ? (durMs - posMs).clamp(0, durMs) : posMs;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(Icons.timer_outlined, size: 18,
+            color: kind == 'countdown'
+                ? const Color(0xFFFFD60A) : const Color(0xFF7ED6DF)),
+        const SizedBox(width: 6),
+        Text(_formatElapsed(display),
+            style: const TextStyle(color: Colors.white, fontSize: 13)),
+      ]),
+    );
+  }
+
+  Widget _timerExpandedContent(Map<String, dynamic> data) {
+    final kind = (data['kind'] as String?) ?? 'countdown';
+    final posMs = (data['positionMs'] as int?) ?? 0;
+    final durMs = (data['durationMs'] as int?) ?? 0;
+    final double arc;
+    final int display;
+    if (kind == 'countdown') {
+      final rem = (durMs - posMs).clamp(0, durMs);
+      arc = durMs > 0 ? rem / durMs : 0;
+      display = rem;
+    } else {
+      arc = (posMs % 60000) / 60000;
+      display = posMs;
+    }
+    final arcColor = kind == 'countdown'
+        ? const Color(0xFF30D158) : const Color(0xFF7ED6DF);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Row(children: [
+        CustomPaint(
+            size: const Size(64, 64),
+            painter: _TimerArcPainter(progress: arc, arcColor: arcColor)),
+        const SizedBox(width: 10),
+        Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(kind == 'countdown' ? 'Timer' : 'Stopwatch',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF9E9EA7))),
+            Text(_formatElapsed(display),
+                style: const TextStyle(color: Colors.white, fontSize: 22,
+                                       fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ]),
+    );
+  }
 }
 
 /// Rounded avatar used by the flash mode. (The native overlay shows the
@@ -575,4 +719,32 @@ class _ControlButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TimerArcPainter extends CustomPainter {
+  final double progress;
+  final Color arcColor;
+  const _TimerArcPainter({required this.progress, required this.arcColor});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.shortestSide / 2) - 4;
+    const sw = 4.0;
+    final bg = Paint()
+      ..style = PaintingStyle.stroke ..strokeWidth = sw
+      ..strokeCap = StrokeCap.round ..color = const Color(0xFF2A2A31);
+    final fg = Paint()
+      ..style = PaintingStyle.stroke ..strokeWidth = sw
+      ..strokeCap = StrokeCap.round ..color = arcColor;
+    canvas.drawCircle(center, radius, bg);
+    if (progress > 0) {
+      canvas.drawArc(Rect.fromCircle(center: center, radius: radius),
+          -math.pi / 2, progress.clamp(0.0, 1.0) * 2 * math.pi, false, fg);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_TimerArcPainter o) =>
+      o.progress != progress || o.arcColor != arcColor;
 }
