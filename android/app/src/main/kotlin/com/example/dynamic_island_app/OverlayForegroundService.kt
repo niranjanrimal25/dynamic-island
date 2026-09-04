@@ -125,6 +125,8 @@ class OverlayForegroundService : Service() {
     private lateinit var btnPrev: ImageButton
     private lateinit var btnPlay: ImageButton
     private lateinit var btnNext: ImageButton
+    private lateinit var callAccentBar: View
+    private lateinit var mediaProgressBar: android.widget.ProgressBar
 
     private var expandedWidthPx = 0
     private var compactWidthPx = 0
@@ -405,6 +407,19 @@ class OverlayForegroundService : Service() {
             addView(timestampView)
         }
 
+        mediaProgressBar = android.widget.ProgressBar(
+            this, null, android.R.attr.progressBarStyleHorizontal
+        ).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(2)
+            ).apply { topMargin = dp(4) }
+            max = 1000
+            progress = 0
+            progressTintList = ColorStateList.valueOf(0xFF7ED6DF.toInt())
+            progressBackgroundTintList = ColorStateList.valueOf(0xFF2A2A31.toInt())
+            visibility = View.GONE
+        }
+
         textColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
@@ -413,7 +428,7 @@ class OverlayForegroundService : Service() {
             )
             addView(labelRow)
             addView(bodyView)
-            // mediaProgressBar added in Task 2
+            addView(mediaProgressBar)
         }
 
         btnPrev = transportButton(R.drawable.ic_prev) {
@@ -443,6 +458,12 @@ class OverlayForegroundService : Service() {
             addView(btnNext)
         }
 
+        callAccentBar = View(this).apply {
+            setBackgroundColor(0xFF30D158.toInt())
+            layoutParams = LinearLayout.LayoutParams(dp(3), LinearLayout.LayoutParams.MATCH_PARENT)
+            visibility = View.GONE
+        }
+
         // Unlock flourish glyph (pulsing open-lock, Face-ID-dots spirit).
         unlockView = ImageView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -464,6 +485,7 @@ class OverlayForegroundService : Service() {
             // camera when idle and reads as "the camera got wider" on alerts.
             background = roundedRectBackground(0xFF000000.toInt(), dp(22))
             setPadding(dp(10), dp(0), dp(6), dp(0))
+            addView(callAccentBar)
             addView(iconView)
             addView(eqContainer)
             addView(textColumn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
@@ -751,6 +773,12 @@ class OverlayForegroundService : Service() {
         val params = windowParams ?: return
 
         val newMode = targetMode()
+        val isCallExpanded = newMode == Mode.CALL && userExpanded
+        callAccentBar.visibility = if (isCallExpanded) View.VISIBLE else View.GONE
+        rootView?.setPadding(if (isCallExpanded) 0 else dp(10), 0, dp(6), 0)
+        (iconView.layoutParams as? LinearLayout.LayoutParams)?.marginStart =
+            if (isCallExpanded) dp(10) else 0
+        iconView.requestLayout()
         // Keep the user's expand/collapse choice for a persistent mode alive
         // across a flash interrupt; reset it only when the persistent mode
         // itself changes (e.g. media -> call).
@@ -791,7 +819,7 @@ class OverlayForegroundService : Service() {
                 applyMediaContent()
                 if (userExpanded) {
                     targetW = expandedWidthPx
-                    targetH = dp(76)
+                    targetH = dp(120)   // was dp(76)
                 } else {
                     targetW = dp(112)
                     targetH = dp(44)
@@ -800,8 +828,8 @@ class OverlayForegroundService : Service() {
             Mode.CALL -> {
                 applyCallContent()
                 if (userExpanded) {
-                    targetW = dp(190)
-                    targetH = dp(52)
+                    targetW = dp(300)   // was dp(190)
+                    targetH = dp(80)    // was dp(52)
                 } else {
                     targetW = dp(118)
                     targetH = dp(40)
@@ -901,22 +929,6 @@ class OverlayForegroundService : Service() {
     private fun applyMediaContent() {
         val media = DynamicIsland.mediaState ?: return
         iconView.visibility = View.VISIBLE
-        if (userExpanded) {
-            setIconSize(dp(48))
-            textColumn.visibility = View.VISIBLE
-            appLabelView.visibility = View.VISIBLE
-            appLabelView.text = media.artist.ifBlank { media.appLabel }
-            bodyView.text = media.title.ifBlank { media.appLabel }
-            bodyView.maxLines = 1
-            controlsRow.visibility = View.VISIBLE
-            btnPlay.setImageResource(
-                if (media.playing) R.drawable.ic_pause else R.drawable.ic_play
-            )
-        } else {
-            setIconSize(dp(28))
-            textColumn.visibility = View.GONE
-            controlsRow.visibility = View.GONE
-        }
         iconView.scaleType = ImageView.ScaleType.CENTER_CROP
         iconView.imageTintList = null
         if (media.art != null) {
@@ -926,26 +938,56 @@ class OverlayForegroundService : Service() {
             iconView.imageTintList = ColorStateList.valueOf(0xFF9E9EA7.toInt())
             iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
         }
+        eqContainer.visibility = View.GONE
+
+        if (userExpanded) {
+            setIconSize(dp(56))
+            textColumn.visibility = View.VISIBLE
+            labelRow.visibility = View.VISIBLE
+            appLabelView.text = media.artist.ifBlank { media.appLabel }
+            appLabelView.visibility = View.VISIBLE
+            timestampView.visibility = View.GONE
+            bodyView.text = media.title.ifBlank { media.appLabel }
+            bodyView.textSize = 14f
+            bodyView.maxLines = 1
+            val prog = if (media.durationMs > 0L) {
+                (media.positionMs * 1000L / media.durationMs).toInt().coerceIn(0, 1000)
+            } else 0
+            mediaProgressBar.progress = prog
+            mediaProgressBar.visibility = View.VISIBLE
+            controlsRow.visibility = View.VISIBLE
+            btnPlay.setImageResource(
+                if (media.playing) R.drawable.ic_pause else R.drawable.ic_play
+            )
+        } else {
+            setIconSize(dp(28))
+            textColumn.visibility = View.GONE
+            controlsRow.visibility = View.GONE
+            mediaProgressBar.visibility = View.GONE
+            bodyView.textSize = 13f
+        }
     }
 
     private fun applyCallContent() {
         iconView.visibility = View.VISIBLE
-        setIconSize(if (userExpanded) dp(22) else dp(18))
+        setIconSize(if (userExpanded) dp(24) else dp(18))
         iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
         iconView.imageTintList = ColorStateList.valueOf(0xFF30D158.toInt())
         iconView.setImageResource(R.drawable.ic_call)
         textColumn.visibility = View.VISIBLE
+        labelRow.visibility = if (userExpanded) View.VISIBLE else View.GONE
         appLabelView.visibility = if (userExpanded) View.VISIBLE else View.GONE
+        timestampView.visibility = View.GONE
         appLabelView.text = "Call"
         val start = DynamicIsland.callStartedAtElapsedMs
+        bodyView.textSize = if (userExpanded) 20f else 13f
         bodyView.maxLines = 1
         bodyView.text = if (start != null) {
             formatElapsed(SystemClock.elapsedRealtime() - start)
-        } else {
-            ""
-        }
+        } else ""
         eqContainer.visibility = View.GONE
         controlsRow.visibility = View.GONE
+        mediaProgressBar.visibility = View.GONE
     }
 
     private fun applyTimerContent() {
@@ -1136,6 +1178,7 @@ class OverlayForegroundService : Service() {
         controlsRow.alpha = alpha
         unlockView.alpha = alpha
         timestampView.alpha = alpha
+        mediaProgressBar.alpha = alpha
     }
 
     /** SECURITY: drop the in-memory content once it is no longer visible. */
@@ -1145,10 +1188,14 @@ class OverlayForegroundService : Service() {
         iconView.setImageBitmap(null)
         appLabelView.text = ""
         bodyView.text = ""
+        bodyView.textSize = 13f
         setContentAlpha(0f)
         eqContainer.visibility = View.GONE
         controlsRow.visibility = View.GONE
         unlockView.visibility = View.GONE
+        mediaProgressBar.visibility = View.GONE
+        mediaProgressBar.progress = 0
+        callAccentBar.visibility = View.GONE
         stopEq()
         stopUnlockPulse()
     }
@@ -1211,7 +1258,8 @@ class OverlayForegroundService : Service() {
             ObjectAnimator.ofFloat(eqContainer, "alpha", eqContainer.alpha, to),
             ObjectAnimator.ofFloat(controlsRow, "alpha", controlsRow.alpha, to),
             ObjectAnimator.ofFloat(unlockView, "alpha", unlockView.alpha, to),
-            ObjectAnimator.ofFloat(timestampView, "alpha", timestampView.alpha, to)
+            ObjectAnimator.ofFloat(timestampView, "alpha", timestampView.alpha, to),
+            ObjectAnimator.ofFloat(mediaProgressBar, "alpha", mediaProgressBar.alpha, to)
         )
         set.duration = 150L
         set.startDelay = startDelayMs
