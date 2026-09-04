@@ -301,9 +301,10 @@ class _IslandPreviewState extends State<IslandPreview>
   Widget _withSlideIn(Widget child) {
     return AnimatedBuilder(
       animation: _t,
-      builder: (ctx, child2) => Transform.translate(
+      child: child,
+      builder: (_, child2) => Transform.translate(
         offset: Offset(0, (1 - _t.value).clamp(0.0, 1.0) * 8),
-        child: Opacity(opacity: _t.value.clamp(0.0, 1.0), child: child),
+        child: Opacity(opacity: _t.value.clamp(0.0, 1.0), child: child2),
       ),
     );
   }
