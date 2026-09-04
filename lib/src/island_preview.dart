@@ -399,13 +399,13 @@ class _IslandPreviewState extends State<IslandPreview>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  media.title.ifEmpty(() => media.appLabel),
+                  media.title.isEmpty ? media.appLabel : media.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white, fontSize: 13),
                 ),
                 Text(
-                  media.artist.ifEmpty(() => media.appLabel),
+                  media.artist.isEmpty ? media.appLabel : media.artist,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: _labelStyle,
