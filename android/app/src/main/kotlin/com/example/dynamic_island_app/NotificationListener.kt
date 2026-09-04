@@ -24,6 +24,16 @@ import android.service.notification.StatusBarNotification
  */
 class NotificationListener : NotificationListenerService() {
 
+    /**
+     * Keys that WE cancelled in island-only mode. Cancelling a notification
+     * makes the system deliver [onNotificationRemoved] for the same key;
+     * without this guard that callback tore the island flash down a split
+     * second after it appeared (the bug: flashes vanished instantly and
+     * taps hit the pass-through idle capsule).
+     */
+    private val selfCancelled =
+        java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         // Never react to our own "overlay running" notification.
         if (sbn.packageName == packageName) return
@@ -106,6 +116,8 @@ class NotificationListener : NotificationListenerService() {
         // players, calls, downloads) are exempt: cancelling those would
         // strip playback/call controls and apps re-post them anyway.
         if (!sbn.isOngoing && DynamicIsland.isIslandOnlyEnabled(this)) {
+            selfCancelled.add(sbn.key)
+            if (selfCancelled.size > 500) selfCancelled.clear()
             cancelNotification(sbn.key)
         }
 
@@ -116,6 +128,10 @@ class NotificationListener : NotificationListenerService() {
         sbn: StatusBarNotification,
         rankingMap: RankingMap?
     ) {
+        // Removals caused by our own island-only dismissal are expected —
+        // the island flash must live out its full hold time, not collapse
+        // the moment the shade copy disappears.
+        if (selfCancelled.remove(sbn.key)) return
         DynamicIsland.onNotificationRemoved(this, sbn.key)
     }
 

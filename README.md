@@ -166,7 +166,10 @@ Then:
    listener cancels the system copy (`cancelNotification(key)`), so the
    notification shade never accumulates them. The trade-off you choose: once
    the brief flash ends, there is no shade history or quick reply for that
-   notice (nothing is stored to disk). Ongoing notifications (media players,
+   notice (nothing is stored to disk). The island flash itself is NOT
+   affected by the dismissal: the listener tracks the keys it cancelled
+   itself and ignores the resulting removal callbacks, so every flash still
+   shows for its full hold time and stays tappable. Ongoing notifications (media players,
    calls, downloads) are **exempt** — cancelling them would strip live
    playback/call controls and the apps re-post them anyway — and keep
    mirroring into the island as before.
