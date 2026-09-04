@@ -127,6 +127,7 @@ class OverlayForegroundService : Service() {
     private lateinit var btnNext: ImageButton
     private lateinit var callAccentBar: View
     private lateinit var mediaProgressBar: android.widget.ProgressBar
+    private lateinit var arcView: ArcProgressView
 
     private var expandedWidthPx = 0
     private var compactWidthPx = 0
@@ -343,6 +344,11 @@ class OverlayForegroundService : Service() {
     // ------------------------------------------------------------------
 
     private fun createWindow() {
+        arcView = ArcProgressView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64))
+            visibility = View.GONE
+        }
+
         iconView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
@@ -486,6 +492,7 @@ class OverlayForegroundService : Service() {
             background = roundedRectBackground(0xFF000000.toInt(), dp(22))
             setPadding(dp(10), dp(0), dp(6), dp(0))
             addView(callAccentBar)
+            addView(arcView)
             addView(iconView)
             addView(eqContainer)
             addView(textColumn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
@@ -838,8 +845,8 @@ class OverlayForegroundService : Service() {
             Mode.TIMER -> {
                 applyTimerContent()
                 if (userExpanded) {
-                    targetW = dp(190)
-                    targetH = dp(52)
+                    targetW = expandedWidthPx
+                    targetH = dp(110)
                 } else {
                     targetW = dp(118)
                     targetH = dp(40)
@@ -991,19 +998,44 @@ class OverlayForegroundService : Service() {
     }
 
     private fun applyTimerContent() {
-        iconView.visibility = View.VISIBLE
-        setIconSize(if (userExpanded) dp(22) else dp(18))
-        iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
-        iconView.imageTintList = ColorStateList.valueOf(0xFFFFD60A.toInt())
-        iconView.setImageResource(R.drawable.ic_timer)
+        val t = DynamicIsland.timerState ?: return
         textColumn.visibility = View.VISIBLE
+        labelRow.visibility = if (userExpanded) View.VISIBLE else View.GONE
         appLabelView.visibility = if (userExpanded) View.VISIBLE else View.GONE
-        appLabelView.text =
-            if (DynamicIsland.timerState?.kind == TimerKind.STOPWATCH) "Stopwatch" else "Timer"
+        timestampView.visibility = View.GONE
+        appLabelView.text = if (t.kind == TimerKind.STOPWATCH) "Stopwatch" else "Timer"
         bodyView.maxLines = 1
         bodyView.text = timerReadout()
         eqContainer.visibility = View.GONE
         controlsRow.visibility = View.GONE
+        mediaProgressBar.visibility = View.GONE
+
+        if (userExpanded) {
+            iconView.visibility = View.GONE
+            arcView.visibility = View.VISIBLE
+            arcView.arcColor = if (t.kind == TimerKind.COUNTDOWN) 0xFF30D158.toInt()
+                               else 0xFF7ED6DF.toInt()
+            arcView.progress = timerArcProgress(t)
+            bodyView.textSize = 22f
+        } else {
+            iconView.visibility = View.VISIBLE
+            setIconSize(dp(18))
+            iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
+            iconView.imageTintList = ColorStateList.valueOf(
+                if (t.kind == TimerKind.STOPWATCH) 0xFF7ED6DF.toInt() else 0xFFFFD60A.toInt()
+            )
+            iconView.setImageResource(R.drawable.ic_timer)
+            arcView.visibility = View.GONE
+            bodyView.textSize = 13f
+        }
+    }
+
+    private fun timerArcProgress(t: TimerState): Float {
+        val elapsed = SystemClock.elapsedRealtime() - t.startedAtElapsedMs
+        return if (t.kind == TimerKind.COUNTDOWN && t.durationMs > 0L)
+            (t.durationMs - elapsed).coerceAtLeast(0L).toFloat() / t.durationMs
+        else
+            (elapsed % 60_000L).toFloat() / 60_000f
     }
 
     private fun timerReadout(): String {
@@ -1058,6 +1090,9 @@ class OverlayForegroundService : Service() {
                 } else {
                     bodyView.text =
                         formatElapsed(SystemClock.elapsedRealtime() - t.startedAtElapsedMs)
+                }
+                if (userExpanded && arcView.visibility == View.VISIBLE) {
+                    DynamicIsland.timerState?.let { arcView.progress = timerArcProgress(it) }
                 }
             }
             else -> Unit
@@ -1179,6 +1214,7 @@ class OverlayForegroundService : Service() {
         unlockView.alpha = alpha
         timestampView.alpha = alpha
         mediaProgressBar.alpha = alpha
+        arcView.alpha = alpha
     }
 
     /** SECURITY: drop the in-memory content once it is no longer visible. */
@@ -1196,6 +1232,8 @@ class OverlayForegroundService : Service() {
         mediaProgressBar.visibility = View.GONE
         mediaProgressBar.progress = 0
         callAccentBar.visibility = View.GONE
+        arcView.visibility = View.GONE
+        arcView.progress = 0f
         stopEq()
         stopUnlockPulse()
     }
@@ -1259,7 +1297,8 @@ class OverlayForegroundService : Service() {
             ObjectAnimator.ofFloat(controlsRow, "alpha", controlsRow.alpha, to),
             ObjectAnimator.ofFloat(unlockView, "alpha", unlockView.alpha, to),
             ObjectAnimator.ofFloat(timestampView, "alpha", timestampView.alpha, to),
-            ObjectAnimator.ofFloat(mediaProgressBar, "alpha", mediaProgressBar.alpha, to)
+            ObjectAnimator.ofFloat(mediaProgressBar, "alpha", mediaProgressBar.alpha, to),
+            ObjectAnimator.ofFloat(arcView, "alpha", arcView.alpha, to)
         )
         set.duration = 150L
         set.startDelay = startDelayMs
@@ -1283,5 +1322,32 @@ class OverlayForegroundService : Service() {
         rootView = null
         windowManager = null
         windowParams = null
+    }
+
+    private inner class ArcProgressView(ctx: android.content.Context) : android.view.View(ctx) {
+        var progress: Float = 0f
+            set(v) { field = v.coerceIn(0f, 1f); invalidate() }
+        var arcColor: Int = 0xFF30D158.toInt()
+            set(v) { field = v; invalidate() }
+
+        private val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+            color = 0xFF2A2A31.toInt()
+        }
+        private val fgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+        }
+
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            val sw = dp(4).toFloat()
+            bgPaint.strokeWidth = sw; fgPaint.strokeWidth = sw; fgPaint.color = arcColor
+            val cx = width / 2f; val cy = height / 2f
+            val r = (minOf(width, height) / 2f) - sw
+            val oval = android.graphics.RectF(cx - r, cy - r, cx + r, cy + r)
+            canvas.drawArc(oval, -90f, 360f, false, bgPaint)
+            if (progress > 0f) canvas.drawArc(oval, -90f, progress * 360f, false, fgPaint)
+        }
     }
 }
