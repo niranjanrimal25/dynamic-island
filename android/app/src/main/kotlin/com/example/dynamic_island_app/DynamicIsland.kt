@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.app.PendingIntent
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.media.session.MediaController
@@ -27,7 +28,9 @@ class NotificationAlert(
     val appLabel: String,
     val title: String,
     val text: String,
-    val icon: Drawable?
+    val icon: Drawable?,
+    /** What tapping the original notification in the shade would trigger. */
+    val contentIntent: PendingIntent? = null
 )
 
 /**
@@ -101,6 +104,45 @@ object DynamicIsland {
     fun hasPersistentMode(): Boolean =
         callStartedAtElapsedMs != null || timerState != null || mediaState != null
 
+    // ------------------------------------------------------------------
+    // Tap-to-open: in-memory PendingIntent store, keyed by notification key.
+    // RAM-only SECURITY contract: an entry lives exactly as long as that
+    // alert is shown in the island — it is discarded when the alert is
+    // replaced, auto-collapsed, removed from the shade, fired by a tap, or
+    // the service dies. Never persisted, never transmitted (PendingIntent
+    // is not even serializable across the channel; only the key travels).
+    // ------------------------------------------------------------------
+
+    private val contentIntents =
+        java.util.concurrent.ConcurrentHashMap<String, PendingIntent>()
+
+    fun storeContentIntent(key: String, intent: PendingIntent?) {
+        if (intent != null) contentIntents[key] = intent
+    }
+
+    fun dropContentIntent(key: String) {
+        contentIntents.remove(key)
+    }
+
+    fun dropAllContentIntents() {
+        contentIntents.clear()
+    }
+
+    /**
+     * Tap-to-open: fire the stored contentIntent — the same thing tapping the
+     * real notification in the shade would do — then collapse the flash.
+     * If the intent was canceled in the meantime (source app force-stopped /
+     * uninstalled) [PendingIntent.send] throws CanceledException, which we
+     * swallow: the island just collapses silently.
+     */
+    fun openAlert(key: String) {
+        val pending = contentIntents.remove(key)
+        if (pending != null) {
+            runCatching { pending.send() }
+        }
+        OverlayForegroundService.instance?.endFlashNow()
+    }
+
     /** Called by the trackers whenever live state changes (any thread). */
     fun onLiveStateChanged() {
         OverlayForegroundService.instance?.refresh()
@@ -159,6 +201,7 @@ object DynamicIsland {
     private fun forwardAlertPreview(alert: NotificationAlert) {
         val sink = alertSink ?: return
         val data: Map<String, String> = mapOf(
+            "key" to alert.key,
             "packageName" to alert.packageName,
             "appLabel" to alert.appLabel,
             "title" to alert.title,
@@ -303,6 +346,7 @@ object DynamicIsland {
     fun dispatchAlert(context: Context, alert: NotificationAlert) {
         if (!isOverlayEnabled(context)) return
         forwardAlertPreview(alert)
+        storeContentIntent(alert.key, alert.contentIntent)
         OverlayForegroundService.instance?.let {
             it.showAlert(alert)
             return

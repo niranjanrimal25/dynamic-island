@@ -217,7 +217,14 @@ at the same time the highest priority wins the screen:
 4. **Notification flash** — a *temporary interrupt*: it briefly shows on top
    of any live persistent mode, then the pill reverts to the persistent state
    underneath (media/call/timer are never lost). Among persistent modes the
-   priority is call > timer > media.
+   priority is call > timer > media. **Tap-to-open:** once the flash has
+   expanded (armed after the 220 ms expand), tapping it fires the original
+   notification's `contentIntent` — exactly what tapping it in the shade
+   would do — and collapses. A `CanceledException` (source app gone) just
+   collapses silently. The `PendingIntent` lives in a RAM-only map keyed by
+   notification key and is discarded on replace, auto-collapse, shade
+   removal, tap, or service death; only the key ever crosses the channel
+   (`openNotification(id)`).
 
 Tap a persistent pill to expand/collapse its detail view. Expand/collapse use
 a spring-like `PathInterpolator(0.34, 1.56, 0.64, 1)` (mirrored in Dart by
@@ -242,7 +249,7 @@ the real feature depends on it.
 
 | Channel | Direction | Payload |
 |---|---|---|
-| `service` | Dart → native | getStatus, setEnabled, open *settings deep-links, fireTestAlert, request*Permission, startCountdown, startStopwatch, stopTimer, mediaPlayPause, mediaNext, mediaPrev |
+| `service` | Dart → native | getStatus, setEnabled, open *settings deep-links, fireTestAlert, request*Permission, startCountdown, startStopwatch, stopTimer, openNotification, mediaPlayPause, mediaNext, mediaPrev |
 | `status_events` | native → Dart | `"status"` ping (UI re-reads flags) |
 | `alert_events` | native → Dart | transient alert preview while the app UI is open (icon intentionally stays native) |
 | `media_events` | native → Dart | live media preview (title/artist/art PNG bytes/playing/position/duration), pushed on MediaController callbacks; `null` when idle |

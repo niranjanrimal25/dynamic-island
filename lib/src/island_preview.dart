@@ -13,6 +13,7 @@ import 'native_bridge.dart';
 /// screen. It is never written to disk and never leaves the device.
 class AlertPreview {
   const AlertPreview({
+    this.key = '',
     required this.packageName,
     required this.appLabel,
     required this.title,
@@ -20,12 +21,16 @@ class AlertPreview {
   });
 
   factory AlertPreview.fromMap(Map<String, dynamic> map) => AlertPreview(
+        key: (map['key'] as String?) ?? '',
         packageName: (map['packageName'] as String?) ?? '',
         appLabel: (map['appLabel'] as String?) ?? '',
         title: (map['title'] as String?) ?? '',
         text: (map['text'] as String?) ?? '',
       );
 
+  /// In-memory id of the native tap target (PendingIntent never leaves the
+  /// native side; only this key travels over the channel).
+  final String key;
   final String packageName;
   final String appLabel;
   final String title;
@@ -129,11 +134,16 @@ class _IslandPreviewState extends State<IslandPreview>
   late final AnimationController _size;
   late final Animation<double> _t;
   Timer? _hideTimer;
+  Timer? _armTimer;
   StreamSubscription<Map<String, dynamic>>? _alertSub;
   StreamSubscription<Map<String, dynamic>?>? _mediaSub;
   AlertPreview? _current;
   MediaPreview? _media;
   bool _mediaExpanded = false;
+
+  /// A flash becomes tappable (tap-to-open) only once expanded, mirroring
+  /// the native overlay's arming delay.
+  bool _flashArmed = false;
 
   double _fromW = _compactW;
   double _fromH = _compactH;
@@ -191,17 +201,40 @@ class _IslandPreviewState extends State<IslandPreview>
   void _onAlert(Map<String, dynamic> map) {
     if (!mounted) return;
     final alert = AlertPreview.fromMap(map);
-    setState(() => _current = alert);
+    setState(() {
+      _current = alert;
+      _flashArmed = false;
+    });
     _retarget();
+    _armTimer?.cancel();
+    _armTimer = Timer(_animDuration, () {
+      if (mounted) setState(() => _flashArmed = true);
+    });
     _hideTimer?.cancel();
     // Longer notifications stay on screen longer so they can be read.
     final hold = _baseHoldDuration +
         Duration(milliseconds: (alert.summary.length * 8).clamp(0, 4000));
     _hideTimer = Timer(hold, () {
       if (!mounted) return;
-      setState(() => _current = null);
+      setState(() {
+        _current = null;
+        _flashArmed = false;
+      });
       _retarget(); // revert to media/idle underneath
     });
+  }
+
+  /// Tap on an armed, expanded flash: open what the real notification would
+  /// open (native fires the stored contentIntent) and collapse.
+  void _onFlashTap() {
+    final alert = _current;
+    if (alert == null || !_flashArmed) return;
+    setState(() {
+      _current = null;
+      _flashArmed = false;
+    });
+    _retarget();
+    NativeBridge.openNotification(alert.key);
   }
 
   void _onMedia(Map<String, dynamic>? map) {
@@ -211,6 +244,17 @@ class _IslandPreviewState extends State<IslandPreview>
       if (_media == null) _mediaExpanded = false;
     });
     if (_current == null) _retarget();
+  }
+
+  void _onTap() {
+    // A showing flash owns the tap (and only once armed/expanded); media
+    // mode keeps its own expand/collapse behavior underneath.
+    if (_current != null) {
+      _onFlashTap();
+    } else if (_media != null) {
+      setState(() => _mediaExpanded = !_mediaExpanded);
+      _retarget();
+    }
   }
 
   /// Mirrors the native overlay's content measurement: height that fits the
@@ -234,6 +278,7 @@ class _IslandPreviewState extends State<IslandPreview>
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _armTimer?.cancel();
     _alertSub?.cancel();
     _mediaSub?.cancel();
     _size.dispose();
@@ -249,14 +294,10 @@ class _IslandPreviewState extends State<IslandPreview>
         builder: (context, _) {
           final double w = _nowW;
           final double h = _nowH;
-          final bool showingMedia = _current == null && _media != null;
+          final bool interactive =
+              _current != null || (_current == null && _media != null);
           return GestureDetector(
-            onTap: showingMedia
-                ? () {
-                    setState(() => _mediaExpanded = !_mediaExpanded);
-                    _retarget();
-                  }
-                : null,
+            onTap: interactive ? _onTap : null,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(24),
               child: Container(

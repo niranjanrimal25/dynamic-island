@@ -81,7 +81,10 @@ class NotificationListener : NotificationListenerService() {
             appLabel = appLabel,
             title = title,
             text = text,
-            icon = extractIcon(pm, sbn.packageName)
+            icon = extractIcon(pm, sbn.packageName),
+            // What tapping the real notification would open; held in RAM
+            // only, keyed by [key], for as long as the island shows it.
+            contentIntent = sbn.notification.contentIntent
         )
 
         DynamicIsland.dispatchAlert(this, alert)

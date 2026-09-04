@@ -125,6 +125,20 @@ class OverlayForegroundService : Service() {
     private var userExpanded = false
     private var currentAlert: NotificationAlert? = null
 
+    /**
+     * Tap-to-open arming: a flash only becomes tappable once its expand
+     * animation finished, so an accidental tap on the compact pill never
+     * launches an app (it just expands, per Stage-1 behavior).
+     */
+    private var flashArmed = false
+
+    private val flashArmedRunnable = Runnable {
+        if (mode == Mode.FLASH) {
+            flashArmed = true
+            applyTouchability(true)
+        }
+    }
+
     private var shapeAnimator: ValueAnimator? = null
     private var fadeAnimator: AnimatorSet? = null
     private var eqAnimator: ValueAnimator? = null
@@ -136,7 +150,9 @@ class OverlayForegroundService : Service() {
     private val easeCollapse: TimeInterpolator = AccelerateInterpolator()
 
     private val hideRunnable = Runnable {
+        currentAlert?.let { DynamicIsland.dropContentIntent(it.key) }
         currentAlert = null
+        flashArmed = false
         render()
     }
 
@@ -190,6 +206,8 @@ class OverlayForegroundService : Service() {
         main.removeCallbacksAndMessages(null)
         cancelAnimations()
         stopEq()
+        // SECURITY: never outlive the window with stored tap targets.
+        DynamicIsland.dropAllContentIntents()
         IslandMediaTracker.stop(this)
         IslandCallTracker.stop(this)
         removeWindow()
@@ -351,10 +369,23 @@ class OverlayForegroundService : Service() {
             })
             addView(controlsRow)
             setOnClickListener {
-                // Tap a persistent mode to expand/collapse its detail view.
-                if (mode == Mode.MEDIA || mode == Mode.CALL || mode == Mode.TIMER) {
-                    userExpanded = !userExpanded
-                    render()
+                when (mode) {
+                    // Tap a persistent mode to expand/collapse its detail
+                    // view (media keeps its transport controls; it never
+                    // triggers a notification open action).
+                    Mode.MEDIA, Mode.CALL, Mode.TIMER -> {
+                        userExpanded = !userExpanded
+                        render()
+                    }
+                    // Tap an EXPANDED (armed) flash to open what the real
+                    // notification would open; a tap before arming does
+                    // nothing (the pill is not even touchable yet).
+                    Mode.FLASH -> {
+                        if (flashArmed) {
+                            currentAlert?.let { a -> DynamicIsland.openAlert(a.key) }
+                        }
+                    }
+                    else -> Unit
                 }
             }
         }
@@ -555,8 +586,13 @@ class OverlayForegroundService : Service() {
         }
         rootView ?: return
         main.removeCallbacks(hideRunnable)
+        main.removeCallbacks(flashArmedRunnable)
         cancelAnimations()
+        // The replaced alert's tap target is discarded immediately.
+        currentAlert?.let { DynamicIsland.dropContentIntent(it.key) }
         currentAlert = alert
+        flashArmed = false
+        main.postDelayed(flashArmedRunnable, EXPAND_MS)
         render(fromFlashStart = true)
 
         // Longer notifications stay on screen longer so they can be read.
@@ -572,6 +608,24 @@ class OverlayForegroundService : Service() {
             return
         }
         if (currentAlert?.key != key) return
+        DynamicIsland.dropContentIntent(key)
+        currentAlert = null
+        flashArmed = false
+        render()
+    }
+
+    /**
+     * Collapse the flash right now (used after a tap-to-open). The tapped
+     * alert's PendingIntent was already consumed by [DynamicIsland.openAlert].
+     */
+    fun endFlashNow() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { endFlashNow() }
+            return
+        }
+        main.removeCallbacks(hideRunnable)
+        main.removeCallbacks(flashArmedRunnable)
+        flashArmed = false
         currentAlert = null
         render()
     }
@@ -636,8 +690,11 @@ class OverlayForegroundService : Service() {
             }
         }
 
-        // Touches pass through only when there is nothing interactive to show.
-        applyTouchability(mode != Mode.IDLE && mode != Mode.FLASH)
+        // Touches pass through unless something is interactive: persistent
+        // modes always, a flash only once expanded (armed).
+        applyTouchability(
+            mode.isPersistent() || (mode == Mode.FLASH && flashArmed)
+        )
 
         // Live tickers & waveform follow the mode.
         updateTicker()

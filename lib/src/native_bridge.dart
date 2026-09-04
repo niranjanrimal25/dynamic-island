@@ -120,6 +120,12 @@ class NativeBridge {
   static Future<void> fireTestAlert() =>
       _service.invokeMethod<void>('fireTestAlert');
 
+  /// Tap-to-open: asks native to fire the stored contentIntent behind the
+  /// shown notification (only its in-memory [id] travels over the channel;
+  /// the PendingIntent itself never leaves the native side).
+  static Future<void> openNotification(String id) =>
+      _service.invokeMethod<void>('openNotification', {'id': id});
+
   /// Emitted when the native status changes (e.g. the user returns from a
   /// permission screen and the listener/overlay state is different).
   static Stream<void> statusChanges() =>

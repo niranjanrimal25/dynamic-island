@@ -143,6 +143,16 @@ class MainActivity : FlutterActivity() {
                     DynamicIsland.stopTimer()
                     result.success(null)
                 }
+                // Tap-to-open from the (Flutter) island preview: fires the
+                // stored contentIntent of the shown notification — the same
+                // action tapping it in the shade would trigger — then the
+                // flash collapses. The PendingIntent itself never crosses
+                // the channel; only its in-memory key does.
+                "openNotification" -> {
+                    val id = call.argument<String>("id").orEmpty()
+                    DynamicIsland.openAlert(id)
+                    result.success(null)
+                }
                 // Playback control for the island's media mode: forwarded to
                 // the currently mirrored session's transport controls.
                 "mediaPlayPause" -> {
