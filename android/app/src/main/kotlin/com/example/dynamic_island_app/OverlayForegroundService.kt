@@ -1207,14 +1207,13 @@ class OverlayForegroundService : Service() {
     }
 
     private fun setContentAlpha(alpha: Float) {
-        iconView.alpha = alpha
-        textColumn.alpha = alpha
-        eqContainer.alpha = alpha
-        controlsRow.alpha = alpha
-        unlockView.alpha = alpha
+        listOf(iconView, textColumn, eqContainer, controlsRow,
+               unlockView, arcView, mediaProgressBar).forEach {
+            it.alpha = alpha
+            it.translationY = 0f
+        }
         timestampView.alpha = alpha
-        mediaProgressBar.alpha = alpha
-        arcView.alpha = alpha
+        timestampView.translationY = 0f
     }
 
     /** SECURITY: drop the in-memory content once it is no longer visible. */
@@ -1289,18 +1288,19 @@ class OverlayForegroundService : Service() {
     }
 
     private fun fadeContent(to: Float, startDelayMs: Long) {
+        val fromTransY = if (to == 1f) dp(8).toFloat() else 0f
+        val views = listOf(iconView, textColumn, eqContainer, controlsRow,
+                           unlockView, arcView, mediaProgressBar)
+        val anims = views.flatMap { v ->
+            listOf(
+                ObjectAnimator.ofFloat(v, "alpha", v.alpha, to),
+                ObjectAnimator.ofFloat(v, "translationY", fromTransY, 0f)
+            )
+        }
         val set = AnimatorSet()
-        set.playTogether(
-            ObjectAnimator.ofFloat(iconView, "alpha", iconView.alpha, to),
-            ObjectAnimator.ofFloat(textColumn, "alpha", textColumn.alpha, to),
-            ObjectAnimator.ofFloat(eqContainer, "alpha", eqContainer.alpha, to),
-            ObjectAnimator.ofFloat(controlsRow, "alpha", controlsRow.alpha, to),
-            ObjectAnimator.ofFloat(unlockView, "alpha", unlockView.alpha, to),
-            ObjectAnimator.ofFloat(timestampView, "alpha", timestampView.alpha, to),
-            ObjectAnimator.ofFloat(mediaProgressBar, "alpha", mediaProgressBar.alpha, to),
-            ObjectAnimator.ofFloat(arcView, "alpha", arcView.alpha, to)
-        )
-        set.duration = 150L
+        @Suppress("SpreadOperator")
+        set.playTogether(*anims.toTypedArray())
+        set.duration = 180L
         set.startDelay = startDelayMs
         fadeAnimator = set
         set.start()
