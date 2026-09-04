@@ -75,6 +75,7 @@ object DynamicIsland {
     private const val PREFS_NAME = "dynamic_island_prefs"
     private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
     private const val KEY_UNLOCK_FLOURISH = "unlock_flourish"
+    private const val KEY_DISMISS_OVERLAY_WARNING = "dismiss_overlay_warning"
 
     const val SERVICE_CHANNEL_ID = "dynamic_island_service"
     const val SERVICE_NOTIFICATION_ID = 9001
@@ -275,6 +276,20 @@ object DynamicIsland {
 
     fun setUnlockFlourishEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_UNLOCK_FLOURISH, enabled).apply()
+        notifyStatusChanged()
+    }
+
+    /**
+     * Auto-dismiss the OS's "<app> is displaying over other apps" notice the
+     * moment it posts (the OS re-posts it e.g. after each unlock; it cannot
+     * be prevented, only dismissed). Defaults ON per user request; the
+     * listener matches ONLY that phrase and touches no other notification.
+     */
+    fun isDismissOverlayWarningEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_DISMISS_OVERLAY_WARNING, true)
+
+    fun setDismissOverlayWarningEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_DISMISS_OVERLAY_WARNING, enabled).apply()
         notifyStatusChanged()
     }
 

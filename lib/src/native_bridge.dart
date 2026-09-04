@@ -18,6 +18,7 @@ class IslandStatus {
     this.callActive = false,
     this.mediaActive = false,
     this.unlockFlourish = false,
+    this.dismissOverlayWarning = true,
   });
 
   factory IslandStatus.fromMap(Map<dynamic, dynamic> map) {
@@ -34,6 +35,7 @@ class IslandStatus {
       callActive: b('callActive'),
       mediaActive: b('mediaActive'),
       unlockFlourish: b('unlockFlourish'),
+      dismissOverlayWarning: b('dismissOverlayWarning'),
     );
   }
 
@@ -54,6 +56,10 @@ class IslandStatus {
 
   /// User preference: show the brief unlock flourish (default off).
   final bool unlockFlourish;
+
+  /// User preference: auto-dismiss the OS "displaying over other apps"
+  /// notice (default on).
+  final bool dismissOverlayWarning;
 
   bool get allSetupDone =>
       overlayEnabled &&
@@ -119,6 +125,11 @@ class NativeBridge {
   /// Defaults to OFF so nothing appears over apps after an unlock.
   static Future<void> setUnlockFlourish(bool enabled) =>
       _service.invokeMethod<void>('setUnlockFlourish', {'enabled': enabled});
+
+  /// Auto-dismiss the OS "…is displaying over other apps" notice.
+  static Future<void> setDismissOverlayWarning(bool enabled) =>
+      _service.invokeMethod<void>(
+          'setDismissOverlayWarning', {'enabled': enabled});
 
   static Future<void> startStopwatch() =>
       _service.invokeMethod<void>('startStopwatch');

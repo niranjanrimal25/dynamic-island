@@ -28,6 +28,18 @@ class NotificationListener : NotificationListenerService() {
         // Never react to our own "overlay running" notification.
         if (sbn.packageName == packageName) return
 
+        // Android (and most OEM skins) re-posts a system transparency notice
+        // — "<app> is displaying over other apps…" — whenever an overlay app
+        // becomes visible, e.g. after every unlock. The user asked for it
+        // gone; since they granted us notification access we may dismiss
+        // exactly that one notice and nothing else. Opt-outable in settings.
+        if (DynamicIsland.isDismissOverlayWarningEnabled(this) &&
+            isOverlayWarning(sbn)
+        ) {
+            cancelNotification(sbn.key)
+            return
+        }
+
         // Respect the OS-level "notification access" switch and the
         // per-channel switches the user controls in system Settings.
         if (!canReceiveNotifications()) return
@@ -100,6 +112,24 @@ class NotificationListener : NotificationListenerService() {
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    /**
+     * True only for the OS transparency notice about overlay apps
+     * ("<app> is displaying over other apps…"). Matched by phrase so it
+     * works across OEM skins; no other notification is ever touched.
+     */
+    private fun isOverlayWarning(sbn: StatusBarNotification): Boolean {
+        val extras = sbn.notification.extras
+        val haystack = buildString {
+            append(extras.getCharSequence(Notification.EXTRA_TITLE) ?: "")
+            append(' ')
+            append(extras.getCharSequence(Notification.EXTRA_TEXT) ?: "")
+        }.lowercase(java.util.Locale.ROOT)
+        return haystack.contains("displaying over other apps") ||
+            haystack.contains("displayed over other apps") ||
+            haystack.contains("showing over other apps") ||
+            haystack.contains("appearing over other apps")
+    }
 
     /**
      * The OS only delivers callbacks to this service while "Notification

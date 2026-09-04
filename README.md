@@ -235,6 +235,15 @@ top of a secure (PIN/pattern/biometric) lock screen — an OS-level guarantee
 this app respects and does not try to bypass (no `FLAG_SHOW_WHEN_LOCKED`).
 The island reappears the moment the phone is unlocked.
 
+**"…is displaying over other apps" notice:** Android re-posts this system
+transparency warning whenever an overlay app becomes visible (e.g. after
+each unlock). The OS cannot be prevented from posting it, but with
+notification access granted, `NotificationListener` recognizes exactly that
+phrase ("displaying/displayed/showing/appearing over other apps") and calls
+`cancelNotification(key)` for it — nothing else is ever dismissed. On by
+default per user request; opt out via the switch in "Permissions & special
+access".
+
 5. **Unlock flourish (OPT-IN, default OFF)** — the service registers a
    receiver for `ACTION_USER_PRESENT`, the standard broadcast fired when the
    device becomes unlocked & interactive (regardless of method; Android does

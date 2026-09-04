@@ -57,6 +57,7 @@ class _HomeScreenState extends State<HomeScreen>
     callActive: false,
     mediaActive: false,
     unlockFlourish: false,
+    dismissOverlayWarning: true,
   );
   bool _loading = true;
   bool _busy = false;
@@ -256,6 +257,18 @@ class _HomeScreenState extends State<HomeScreen>
             grantedLabel: 'Granted',
             actionLabel: 'Open settings',
             onAction: () => NativeBridge.openOverlayPermissionSettings(),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.notifications_off_outlined, size: 20),
+            title: const Text('Hide "displaying over other apps" notice'),
+            subtitle: const Text(
+              'Android re-posts a system warning whenever an overlay app '
+              'shows (e.g. after each unlock). The OS cannot be stopped from '
+              'posting it, but Isle can dismiss that one notice instantly. '
+              'Nothing else is ever dismissed.',
+            ),
+            value: s.dismissOverlayWarning,
+            onChanged: (v) => NativeBridge.setDismissOverlayWarning(v),
           ),
           _PermissionTile(
             icon: Icons.notifications_active_outlined,
