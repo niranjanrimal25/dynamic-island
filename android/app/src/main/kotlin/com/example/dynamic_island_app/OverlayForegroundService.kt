@@ -136,10 +136,9 @@ class OverlayForegroundService : Service() {
     private var currentAlert: NotificationAlert? = null
 
     /**
-     * Tap-to-open arming: a flash only becomes tappable once its expand
-     * animation finished, so an accidental tap while it grows can't hit it.
-     * Tap toggles the flash expanded/compact; long-press opens the source
-     * app (tap-to-open).
+     * Tap-to-open arming: a flash only becomes tappable-to-open once its
+     * expand animation finishes. Tapping a compact flash skips the auto-expand
+     * wait; tapping an expanded+armed flash fires the source app's intent.
      */
     private var flashArmed = false
     private lateinit var labelRow: LinearLayout
@@ -784,8 +783,8 @@ class OverlayForegroundService : Service() {
                     targetW = expandedWidthPx
                     targetH = computeFlashHeight()
                 } else {
-                    targetW = dp(112)
-                    targetH = dp(44)
+                    targetW = dp(FLASH_COMPACT_W_DP)
+                    targetH = dp(FLASH_COMPACT_H_DP)
                 }
             }
             Mode.MEDIA -> {
