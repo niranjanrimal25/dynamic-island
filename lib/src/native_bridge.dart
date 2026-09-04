@@ -13,6 +13,10 @@ class IslandStatus {
     required this.notificationAccessGranted,
     required this.ignoringBatteryOptimizations,
     required this.postNotificationsPermission,
+    this.phoneStatePermission = false,
+    this.timerActive = false,
+    this.callActive = false,
+    this.mediaActive = false,
   });
 
   factory IslandStatus.fromMap(Map<dynamic, dynamic> map) {
@@ -24,6 +28,10 @@ class IslandStatus {
       notificationAccessGranted: b('notificationAccessGranted'),
       ignoringBatteryOptimizations: b('ignoringBatteryOptimizations'),
       postNotificationsPermission: b('postNotificationsPermission'),
+      phoneStatePermission: b('phoneStatePermission'),
+      timerActive: b('timerActive'),
+      callActive: b('callActive'),
+      mediaActive: b('mediaActive'),
     );
   }
 
@@ -33,6 +41,14 @@ class IslandStatus {
   final bool notificationAccessGranted;
   final bool ignoringBatteryOptimizations;
   final bool postNotificationsPermission;
+
+  /// READ_PHONE_STATE granted — enables the live call-timer mode only.
+  final bool phoneStatePermission;
+
+  /// Live-mode flags (RAM-only state on the native side).
+  final bool timerActive;
+  final bool callActive;
+  final bool mediaActive;
 
   bool get allSetupDone =>
       overlayEnabled &&
@@ -81,6 +97,21 @@ class NativeBridge {
 
   static Future<void> requestPostNotificationsPermission() =>
       _service.invokeMethod<void>('requestPostNotificationsPermission');
+
+  /// Grants the call-timer mode (read-only call-state observation; see the
+  /// AndroidManifest comment for the exact scope).
+  static Future<void> requestPhoneStatePermission() =>
+      _service.invokeMethod<void>('requestPhoneStatePermission');
+
+  /// Live island modes: countdown / stopwatch fed into the native overlay.
+  /// RAM-only on the native side — never persisted.
+  static Future<void> startCountdown(int seconds) =>
+      _service.invokeMethod<void>('startCountdown', {'seconds': seconds});
+
+  static Future<void> startStopwatch() =>
+      _service.invokeMethod<void>('startStopwatch');
+
+  static Future<void> stopTimer() => _service.invokeMethod<void>('stopTimer');
 
   /// Developer helper: makes the island show a synthetic alert (native side
   /// builds a fake alert in memory; no real notification is posted).

@@ -98,9 +98,12 @@ class _IslandPreviewState extends State<IslandPreview>
     super.initState();
     _size = AnimationController(vsync: this, duration: _expandDuration)
       ..addStatusListener(_onAnimationStatus);
+    // Spring-like: slight overshoot on expand (iOS-island feel), clean
+    // acceleration on collapse. The native overlay uses the matching
+    // PathInterpolator(0.34, 1.56, 0.64, 1).
     _t = CurvedAnimation(
       parent: _size,
-      curve: Curves.easeOutCubic,
+      curve: Curves.easeOutBack,
       reverseCurve: Curves.easeInCubic,
     );
     _subscription =

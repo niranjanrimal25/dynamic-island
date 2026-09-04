@@ -52,6 +52,10 @@ class _HomeScreenState extends State<HomeScreen>
     notificationAccessGranted: false,
     ignoringBatteryOptimizations: false,
     postNotificationsPermission: false,
+    phoneStatePermission: false,
+    timerActive: false,
+    callActive: false,
+    mediaActive: false,
   );
   bool _loading = true;
   bool _busy = false;
@@ -132,6 +136,8 @@ class _HomeScreenState extends State<HomeScreen>
                     ..._buildSetupBanner(),
                   const SizedBox(height: 16),
                   _buildPermissionsSection(),
+                  const SizedBox(height: 16),
+                  _buildLiveModesSection(),
                   const SizedBox(height: 16),
                   _buildTestSection(),
                   const SizedBox(height: 16),
@@ -273,6 +279,85 @@ class _HomeScreenState extends State<HomeScreen>
             actionLabel: 'Request exemption',
             onAction: () => NativeBridge.openBatteryOptimizationSettings(),
           ),
+        ],
+      ),
+    );
+  }
+
+  // -- Live modes (media / call / timer) -----------------------------------
+
+  Widget _buildLiveModesSection() {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const ListTile(
+            leading: Icon(Icons.bubble_chart_outlined),
+            title: Text('Live island modes'),
+            subtitle: Text(
+              'Priority when several are active at once: call > timer > '
+              'media > notification flash.',
+            ),
+          ),
+          _Bullet(
+            icon: Icons.music_note_outlined,
+            text: 'Media: while any app (Spotify, YouTube Music, ...) plays, '
+                'the island shows album art + a waveform. Tap it for '
+                'play/pause/skip controls.',
+          ),
+          _Bullet(
+            icon: Icons.call_outlined,
+            text: _status.phoneStatePermission
+                ? 'Call: a live duration timer runs in the island during '
+                    'phone calls.'
+                : 'Call: allow the (read-only) phone-state permission to '
+                    'show a live call timer.',
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (!_status.phoneStatePermission)
+                  TextButton.icon(
+                    onPressed: _status.overlayEnabled
+                        ? () => NativeBridge.requestPhoneStatePermission()
+                        : null,
+                    icon: const Icon(Icons.call, size: 18),
+                    label: const Text('Enable call timer'),
+                  ),
+                for (final mins in const [1, 5, 10])
+                  OutlinedButton(
+                    onPressed: _status.overlayEnabled
+                        ? () => NativeBridge.startCountdown(mins * 60)
+                        : null,
+                    child: Text('$mins min'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _status.overlayEnabled
+                      ? () => NativeBridge.startStopwatch()
+                      : null,
+                  icon: const Icon(Icons.timer_outlined, size: 18),
+                  label: const Text('Stopwatch'),
+                ),
+                if (_status.timerActive)
+                  TextButton.icon(
+                    onPressed: () => NativeBridge.stopTimer(),
+                    icon: const Icon(Icons.stop, size: 18),
+                    label: const Text('Stop'),
+                  ),
+              ],
+            ),
+          ),
+          const _Bullet(
+            icon: Icons.lock_outline,
+            text: 'Android never lets overlay windows cover a secure lock '
+                'screen (PIN/pattern/biometric) — the island appears again '
+                'the moment the phone is unlocked.',
+          ),
+          const SizedBox(height: 8),
         ],
       ),
     );

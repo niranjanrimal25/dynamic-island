@@ -29,6 +29,22 @@
     <!-- Ask to be exempted from battery optimization (prompt once). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
+    <!-- ==============================================================
+         READ_PHONE_STATE — used ONLY for the live call-timer mode.
+         What this permission *can* grant an app: observation of the
+         telephony call state (idle / ringing / off-hook) and, on older
+         APIs, read access to device telephony identifiers (IMEI, phone
+         number, subscriber id).
+         What this app actually uses: ONLY the call-state callback
+         (TelephonyManager.listen(LISTEN_CALL_STATE)) to know when a
+         call is active so the island can run a duration timer. The app
+         never queries TelephonyManager for the device id, the phone
+         number or the incoming number, and the callback's number
+         parameter is ignored and never stored. The permission is
+         revocable at any time; without it the call-timer mode simply
+         stays inactive. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+
     <application
         android:label="Isle"
         android:name="${applicationName}"

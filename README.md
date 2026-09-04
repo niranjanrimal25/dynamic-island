@@ -166,8 +166,9 @@ Then:
    the ON/OFF boolean and permission checks.
 
 3. **OverlayForegroundService** (native) — a `TYPE_APPLICATION_OVERLAY`
-   window, not touchable (`FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL`), so all
-   taps pass through. It posts the generic foreground notification (required
+   window. While idle or flashing a notification it sets
+   `FLAG_NOT_TOUCHABLE` so all taps pass through; while a live mode (media /
+   call / timer) is showing it becomes touchable so you can tap to expand. It posts the generic foreground notification (required
    by Android). The idle pill is a slim **empty black capsule (60×34 dp)
    positioned in place of the front camera** — it centers itself vertically on
    the display-cutout camera rect (falling back to the status-bar band), and
@@ -186,6 +187,35 @@ Then:
 5. **Foreground service type** — Android 14+ requires a declared type; this
    uses `specialUse` with a human-readable subtype, declared in the manifest.
 
+### Live island modes (priority: call > timer > media > flash)
+
+The pill is one unified component with several modes; when several are active
+at the same time the highest priority wins the screen:
+
+1. **Call** — `IslandCallTracker` registers ONLY
+   `TelephonyManager.listen(LISTEN_CALL_STATE)` (needs `READ_PHONE_STATE`,
+   runtime-revocable; the callback's phone-number argument is ignored and no
+   telephony identifiers are ever read — see the manifest comment). While a
+   call is off-hook the island shows a live duration timer.
+2. **Timer / stopwatch** — started from the app's "Live island modes" card;
+   the countdown/stopwatch state lives **only in RAM** (by design it does not
+   survive a process restart) and ticks live in the pill.
+3. **Media** — `IslandMediaTracker` uses `MediaSessionManager`
+   (gated behind the notification-access grant, no extra permission) to track
+   active sessions of any app. While something plays, the compact pill shows
+   album art + an animated waveform; tapping expands to title/artist and real
+   play/pause/skip buttons driven by `MediaController.transportControls`.
+4. **Notification flash** — as before; it never interrupts a live mode.
+
+Tap a persistent pill to expand/collapse its detail view. Expand/collapse use
+a spring-like `PathInterpolator(0.34, 1.56, 0.64, 1)` (mirrored in Dart by
+`Curves.easeOutBack`).
+
+**Lock screen:** Android never allows `TYPE_APPLICATION_OVERLAY` windows on
+top of a secure (PIN/pattern/biometric) lock screen — an OS-level guarantee
+this app respects and does not try to bypass (no `FLAG_SHOW_WHEN_LOCKED`).
+The island reappears the moment the phone is unlocked.
+
 ### Why there are two "islands"
 
 The always-on island is the native Kotlin window above — it works with zero
@@ -200,7 +230,7 @@ the real feature depends on it.
 
 | Channel | Direction | Payload |
 |---|---|---|
-| `service` | Dart → native | getStatus, setEnabled, open *settings deep-links, fireTestAlert |
+| `service` | Dart → native | getStatus, setEnabled, open *settings deep-links, fireTestAlert, request*Permission, startCountdown, startStopwatch, stopTimer |
 | `status_events` | native → Dart | `"status"` ping (UI re-reads flags) |
 | `alert_events` | native → Dart | transient alert preview while the app UI is open (icon intentionally stays native) |
 

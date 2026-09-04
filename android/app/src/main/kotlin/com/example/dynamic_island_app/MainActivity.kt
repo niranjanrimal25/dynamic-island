@@ -121,6 +121,28 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(null)
                 }
+                "requestPhoneStatePermission" -> {
+                    // Call-timer mode only; see AndroidManifest for the exact
+                    // scope of READ_PHONE_STATE in this app.
+                    requestPermissions(
+                        arrayOf(Manifest.permission.READ_PHONE_STATE),
+                        1002
+                    )
+                    result.success(null)
+                }
+                "startCountdown" -> {
+                    val seconds = call.argument<Int>("seconds") ?: 60
+                    DynamicIsland.startCountdown(seconds)
+                    result.success(null)
+                }
+                "startStopwatch" -> {
+                    DynamicIsland.startStopwatch()
+                    result.success(null)
+                }
+                "stopTimer" -> {
+                    DynamicIsland.stopTimer()
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -168,6 +190,9 @@ class MainActivity : FlutterActivity() {
         } else {
             true
         }
+        val phoneState =
+            checkSelfPermission(Manifest.permission.READ_PHONE_STATE) ==
+                PackageManager.PERMISSION_GRANTED
         return mapOf(
             "overlayEnabled" to DynamicIsland.isOverlayEnabled(this),
             "overlayRunning" to DynamicIsland.isOverlayServiceRunning(),
@@ -175,8 +200,28 @@ class MainActivity : FlutterActivity() {
             "notificationAccessGranted" to DynamicIsland.isNotificationAccessGranted(this),
             "ignoringBatteryOptimizations" to
                 DynamicIsland.isIgnoringBatteryOptimizations(this),
-            "postNotificationsPermission" to postNotif
+            "postNotificationsPermission" to postNotif,
+            "phoneStatePermission" to phoneState,
+            "timerActive" to (DynamicIsland.timerState != null),
+            "callActive" to (DynamicIsland.callStartedAtElapsedMs != null),
+            "mediaActive" to (DynamicIsland.mediaState != null)
         )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1002 &&
+            grantResults.contains(PackageManager.PERMISSION_GRANTED)
+        ) {
+            // Call-timer mode can activate now; the tracker no-ops without
+            // the permission and starts cleanly once it is granted.
+            IslandCallTracker.start(this)
+            DynamicIsland.notifyStatusChanged()
+        }
     }
 
     private fun openBatteryOptimizationList() {

@@ -4,9 +4,12 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
+import android.media.session.MediaController
 import android.os.Build
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
@@ -25,6 +28,29 @@ class NotificationAlert(
     val title: String,
     val text: String,
     val icon: Drawable?
+)
+
+/**
+ * Live media-session snapshot (in-memory only, like [NotificationAlert]).
+ * The [controller] is used solely to drive playback from the island's
+ * transport buttons; nothing here is persisted or transmitted.
+ */
+class MediaState(
+    val appLabel: String,
+    val title: String,
+    val artist: String,
+    val art: Bitmap?,
+    val playing: Boolean,
+    val controller: MediaController
+)
+
+/** Live countdown / stopwatch state. RAM only — a restart drops it by design. */
+enum class TimerKind { COUNTDOWN, STOPWATCH }
+
+class TimerState(
+    val kind: TimerKind,
+    val startedAtElapsedMs: Long,
+    val durationMs: Long = 0L
 )
 
 /**
@@ -51,6 +77,53 @@ object DynamicIsland {
     // held here (in memory only) until the service starts and consumes it.
     @Volatile
     var pendingAlert: NotificationAlert? = null
+
+    // ------------------------------------------------------------------
+    // Live "persistent mode" state — all in memory, never persisted.
+    // Priority when several are active at once: CALL > TIMER > MEDIA >
+    // notification flash (see hasPersistentMode / dispatchAlert).
+    // ------------------------------------------------------------------
+
+    /** Active media session (any app) tracked by [IslandMediaTracker]. */
+    @Volatile
+    var mediaState: MediaState? = null
+
+    /** elapsedRealtime() at which the current call went off-hook. */
+    @Volatile
+    var callStartedAtElapsedMs: Long? = null
+
+    /** Running countdown/stopwatch started from the app UI. */
+    @Volatile
+    var timerState: TimerState? = null
+
+    fun hasPersistentMode(): Boolean =
+        callStartedAtElapsedMs != null || timerState != null || mediaState != null
+
+    /** Called by the trackers whenever live state changes (any thread). */
+    fun onLiveStateChanged() {
+        OverlayForegroundService.instance?.refresh()
+        notifyStatusChanged()
+    }
+
+    fun startCountdown(seconds: Int) {
+        timerState = TimerState(
+            TimerKind.COUNTDOWN,
+            SystemClock.elapsedRealtime(),
+            seconds * 1000L
+        )
+        onLiveStateChanged()
+    }
+
+    fun startStopwatch() {
+        timerState = TimerState(TimerKind.STOPWATCH, SystemClock.elapsedRealtime())
+        onLiveStateChanged()
+    }
+
+    fun stopTimer() {
+        if (timerState == null) return
+        timerState = null
+        onLiveStateChanged()
+    }
 
     // Live status-event sink. Non-null only while the Flutter UI is attached.
     @Volatile
@@ -182,6 +255,9 @@ object DynamicIsland {
     fun dispatchAlert(context: Context, alert: NotificationAlert) {
         if (!isOverlayEnabled(context)) return
         forwardAlertPreview(alert)
+        // Priority order: call > timer > media > notification flash. A flash
+        // never interrupts a live persistent mode.
+        if (hasPersistentMode()) return
         OverlayForegroundService.instance?.let {
             it.showAlert(alert)
             return

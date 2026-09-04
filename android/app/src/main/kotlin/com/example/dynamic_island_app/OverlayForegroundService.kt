@@ -13,35 +13,55 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
-import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * Foreground service that owns the floating "island" window.
  *
+ * The pill is a single unified component with several modes, resolved by
+ * priority (call > timer > media > notification flash > idle):
+ *  - IDLE:  pure-black compact capsule blended into the punch-hole camera,
+ *           touches pass straight through (FLAG_NOT_TOUCHABLE).
+ *  - FLASH: a captured notification expands the pill briefly, then it
+ *           collapses (touches still pass through).
+ *  - MEDIA: persistent compact view (album art + animated waveform) while a
+ *           media session of any app is playing; tap expands to title/artist
+ *           + real play/pause/skip transport controls (MediaController).
+ *  - CALL:  persistent live call-duration timer while a call is off-hook.
+ *  - TIMER: persistent live countdown/stopwatch fed by the app's timer UI.
+ *
  * SECURITY:
- *  - Renders the *current* in-memory [NotificationAlert] only for the few
- *    seconds it is on screen, then clears the TextViews / ImageView.
- *  - NEVER writes notification content anywhere; the only disk state in the
- *    app is the user's ON/OFF preference (see [DynamicIsland]).
- *  - The persistent service notification shows a generic label only — never
- *    any captured content or icon.
- *  - Nothing here touches the network; the manifest has no INTERNET.
+ *  - Renders the *current* in-memory alert / media / call / timer state only
+ *    while visible, then clears the views (see [clearContent]).
+ *  - NEVER writes notification/media/call content anywhere; the only disk
+ *    state in the app is the user's ON/OFF preference (see [DynamicIsland]).
+ *  - The persistent service notification shows a generic label only.
+ *  - Nothing here touches the network; no manifest variant has INTERNET.
+ *  - The overlay never draws over the secure lock screen: it is a plain
+ *    TYPE_APPLICATION_OVERLAY without FLAG_SHOW_WHEN_LOCKED, and Android
+ *    hides such windows above a PIN/pattern/biometric keyguard by design.
  */
 class OverlayForegroundService : Service() {
 
@@ -62,14 +82,19 @@ class OverlayForegroundService : Service() {
         /** Body wraps over at most this many lines, then ellipsizes. */
         private const val MAX_BODY_LINES = 4
 
-        /** Upper bound for the expanded pill height. */
+        /** Upper bound for the flash-expanded pill height. */
         private const val MAX_EXPANDED_HEIGHT_DP = 160
+
+        /** Live tick for the call / timer readouts. */
+        private const val TICK_MS = 250L
 
         /** Non-null while this service is alive (guarded by @Volatile). */
         @Volatile
         var instance: OverlayForegroundService? = null
             private set
     }
+
+    private enum class Mode { IDLE, FLASH, MEDIA, CALL, TIMER }
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -78,21 +103,45 @@ class OverlayForegroundService : Service() {
     private var windowParams: WindowManager.LayoutParams? = null
 
     private lateinit var iconView: ImageView
+    private lateinit var eqContainer: LinearLayout
+    private lateinit var eqBars: List<View>
     private lateinit var appLabelView: TextView
     private lateinit var bodyView: TextView
     private lateinit var textColumn: LinearLayout
+    private lateinit var controlsRow: LinearLayout
+    private lateinit var btnPrev: ImageButton
+    private lateinit var btnPlay: ImageButton
+    private lateinit var btnNext: ImageButton
 
     private var expandedWidthPx = 0
     private var compactWidthPx = 0
     private var compactHeightPx = 0
-    private var expandedHeightPx = 0
 
-    private var isExpanded = false
-
+    private var mode = Mode.IDLE
+    private var userExpanded = false
     private var currentAlert: NotificationAlert? = null
+
     private var shapeAnimator: ValueAnimator? = null
     private var fadeAnimator: AnimatorSet? = null
-    private val hideRunnable = Runnable { collapseToIdle() }
+    private var eqAnimator: ValueAnimator? = null
+    private var tickerOn = false
+
+    /** Spring-like expand (slight overshoot, iOS-island feel). */
+    private val springExpand: TimeInterpolator =
+        PathInterpolator(0.34f, 1.56f, 0.64f, 1f)
+    private val easeCollapse: TimeInterpolator = AccelerateInterpolator()
+
+    private val hideRunnable = Runnable {
+        currentAlert = null
+        render()
+    }
+
+    private val tickRunnable = object : Runnable {
+        override fun run() {
+            tickOnce()
+            main.postDelayed(this, TICK_MS)
+        }
+    }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -105,6 +154,9 @@ class OverlayForegroundService : Service() {
         instance = this
         createNotificationChannel()
         createWindow()
+        IslandMediaTracker.start(this)
+        IslandCallTracker.start(this)
+        refresh()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -133,6 +185,9 @@ class OverlayForegroundService : Service() {
         instance = null
         main.removeCallbacksAndMessages(null)
         cancelAnimations()
+        stopEq()
+        IslandMediaTracker.stop(this)
+        IslandCallTracker.stop(this)
         removeWindow()
         super.onDestroy()
     }
@@ -203,9 +258,27 @@ class OverlayForegroundService : Service() {
             outlineProvider = ViewOutlineProvider.BACKGROUND
             clipToOutline = true
             // Transparent tile: the shape still rounds/clips the icon, but
-            // sender icons (and our own black logo) sit directly on the
-            // black pill with no visible box.
+            // sender icons / album art / our own black logo sit directly on
+            // the black pill with no visible box.
             background = roundedRectBackground(0x00000000, dp(8))
+        }
+
+        eqBars = (0 until 3).map {
+            View(this).apply {
+                setBackgroundColor(0xFF7ED6DF.toInt())
+                layoutParams = LinearLayout.LayoutParams(dp(4), dp(4)).apply {
+                    marginStart = if (it == 0) 0 else dp(3)
+                }
+            }
+        }
+        eqContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply {
+                marginStart = dp(6)
+            }
+            visibility = View.GONE
+            eqBars.forEach { addView(it) }
         }
 
         appLabelView = TextView(this).apply {
@@ -230,6 +303,33 @@ class OverlayForegroundService : Service() {
             addView(bodyView)
         }
 
+        btnPrev = transportButton(R.drawable.ic_prev) {
+            DynamicIsland.mediaState?.controller?.transportControls?.skipToPrevious()
+        }
+        btnPlay = transportButton(R.drawable.ic_play) {
+            val c = DynamicIsland.mediaState?.controller ?: return@transportButton
+            if (DynamicIsland.mediaState?.playing == true) {
+                c.transportControls.pause()
+            } else {
+                c.transportControls.play()
+            }
+        }
+        btnNext = transportButton(R.drawable.ic_next) {
+            DynamicIsland.mediaState?.controller?.transportControls?.skipToNext()
+        }
+        controlsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            visibility = View.GONE
+            addView(btnPrev)
+            addView(btnPlay)
+            addView(btnNext)
+        }
+
         rootView = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -238,20 +338,28 @@ class OverlayForegroundService : Service() {
             // Pure black so the pill is invisible against the punch-hole
             // camera when idle and reads as "the camera got wider" on alerts.
             background = roundedRectBackground(0xFF000000.toInt(), dp(22))
-            setPadding(dp(10), dp(0), dp(10), dp(0))
+            setPadding(dp(10), dp(0), dp(6), dp(0))
             addView(iconView)
+            addView(eqContainer)
             addView(textColumn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
                 // gap between icon and text
                 marginStart = dp(8)
             })
+            addView(controlsRow)
+            setOnClickListener {
+                // Tap a persistent mode to expand/collapse its detail view.
+                if (mode == Mode.MEDIA || mode == Mode.CALL || mode == Mode.TIMER) {
+                    userExpanded = !userExpanded
+                    render()
+                }
+            }
         }
 
         // iPhone-style idle capsule: just large enough to wrap the front
         // camera cutout. It is empty (black) when idle — content only
-        // appears while an alert is expanded.
+        // appears while a mode is active.
         compactWidthPx = dp(60)
         compactHeightPx = dp(34)
-        expandedHeightPx = dp(56)
         expandedWidthPx = computeExpandedWidth()
 
         windowParams = WindowManager.LayoutParams(
@@ -263,10 +371,7 @@ class OverlayForegroundService : Service() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            baseFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -294,9 +399,25 @@ class OverlayForegroundService : Service() {
         }
 
         // Idle: a plain black capsule around the camera — no content.
-        iconView.alpha = 0f
-        textColumn.alpha = 0f
+        setContentAlpha(0f)
     }
+
+    private fun baseFlags(): Int =
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+
+    private fun transportButton(iconRes: Int, onClick: () -> Unit): ImageButton =
+        ImageButton(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+            setImageResource(iconRes)
+            imageTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+            setBackgroundColor(0x00000000)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(0, 0, 0, 0)
+            setOnClickListener { onClick() }
+        }
 
     private fun roundedRectBackground(color: Int, radiusPx: Int): GradientDrawable =
         GradientDrawable().apply {
@@ -383,8 +504,25 @@ class OverlayForegroundService : Service() {
     }
 
     // ------------------------------------------------------------------
-    // Alert rendering (in-memory only, transient)
+    // Mode resolution & rendering (in-memory only, transient)
     // ------------------------------------------------------------------
+
+    /** Thread-safe entry point used by [DynamicIsland.onLiveStateChanged]. */
+    fun refresh() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { render() }
+        } else {
+            render()
+        }
+    }
+
+    private fun targetMode(): Mode = when {
+        DynamicIsland.callStartedAtElapsedMs != null -> Mode.CALL
+        DynamicIsland.timerState != null -> Mode.TIMER
+        DynamicIsland.mediaState != null -> Mode.MEDIA
+        currentAlert != null -> Mode.FLASH
+        else -> Mode.IDLE
+    }
 
     /**
      * Called by [DynamicIsland.dispatchAlert] (listener thread) and from
@@ -395,54 +533,13 @@ class OverlayForegroundService : Service() {
             main.post { showAlert(alert) }
             return
         }
-        val root = rootView ?: return
+        if (DynamicIsland.hasPersistentMode()) return // priority: flash is last
 
-        // Replace whatever is displayed: this alert becomes current. The new
-        // alert is assigned AFTER cancelling old animations, because a
-        // cancelled animator may synchronously run idle cleanup.
+        rootView ?: return
         main.removeCallbacks(hideRunnable)
         cancelAnimations()
         currentAlert = alert
-
-        iconView.setImageDrawable(alert.icon)
-        appLabelView.text = alert.appLabel
-        bodyView.text = alert.text.ifBlank { alert.title }
-
-        // Size the expanded pill to fit the whole (multi-line) body instead
-        // of using a fixed height — a full email gets a taller island.
-        expandedHeightPx = computeExpandedHeight()
-
-        val params = windowParams ?: return
-        if (!isExpanded) {
-            // Expand the island around the camera. Content fades in only once
-            // the pill has grown past its own content size (iPhone-like) —
-            // start both hidden so nothing is clipped mid-expansion.
-            iconView.alpha = 0f
-            textColumn.alpha = 0f
-            animateShape(
-                fromW = params.width,
-                fromH = params.height,
-                toW = expandedWidthPx,
-                toH = expandedHeightPx,
-                durationMs = EXPAND_MS,
-                interpolator = DecelerateInterpolator()
-            )
-            // ~60% through the expansion the capsule is wide enough for the
-            // 40dp icon, so fade the icon + text in from here.
-            fadeContent(to = 1f, startDelayMs = EXPAND_MS * 3 / 5)
-            isExpanded = true
-        } else {
-            // Already expanded: refresh content and smoothly adapt the height
-            // (a longer notification grows the island further).
-            animateShape(
-                fromW = params.width,
-                fromH = params.height,
-                toW = expandedWidthPx,
-                toH = expandedHeightPx,
-                durationMs = EXPAND_MS,
-                interpolator = DecelerateInterpolator()
-            )
-        }
+        render(fromFlashStart = true)
 
         // Longer notifications stay on screen longer so they can be read.
         val holdMs = HOLD_MS +
@@ -450,12 +547,304 @@ class OverlayForegroundService : Service() {
         main.postDelayed(hideRunnable, EXPAND_MS + holdMs)
     }
 
+    /** Notification dismissed (or removed) in the shade / by its app. */
+    fun onAlertRemoved(key: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { onAlertRemoved(key) }
+            return
+        }
+        if (currentAlert?.key != key) return
+        currentAlert = null
+        render()
+    }
+
+    private fun render(fromFlashStart: Boolean = false) {
+        val root = rootView ?: return
+        val params = windowParams ?: return
+
+        val newMode = targetMode()
+        if (newMode != mode && newMode != Mode.FLASH) userExpanded = false
+        val previous = mode
+        mode = newMode
+
+        // Target geometry + content per mode.
+        val targetW: Int
+        val targetH: Int
+        when (mode) {
+            Mode.IDLE -> {
+                targetW = compactWidthPx
+                targetH = compactHeightPx
+            }
+            Mode.FLASH -> {
+                applyFlashContent()
+                targetW = expandedWidthPx
+                targetH = computeFlashHeight()
+            }
+            Mode.MEDIA -> {
+                applyMediaContent()
+                if (userExpanded) {
+                    targetW = expandedWidthPx
+                    targetH = dp(76)
+                } else {
+                    targetW = dp(112)
+                    targetH = dp(44)
+                }
+            }
+            Mode.CALL -> {
+                applyCallContent()
+                if (userExpanded) {
+                    targetW = dp(190)
+                    targetH = dp(52)
+                } else {
+                    targetW = dp(118)
+                    targetH = dp(40)
+                }
+            }
+            Mode.TIMER -> {
+                applyTimerContent()
+                if (userExpanded) {
+                    targetW = dp(190)
+                    targetH = dp(52)
+                } else {
+                    targetW = dp(118)
+                    targetH = dp(40)
+                }
+            }
+        }
+
+        // Touches pass through only when there is nothing interactive to show.
+        applyTouchability(mode != Mode.IDLE && mode != Mode.FLASH)
+
+        // Live tickers & waveform follow the mode.
+        updateTicker()
+        updateEq()
+
+        if (mode == Mode.IDLE) {
+            // Collapse back into the camera and drop all content when done.
+            animateShape(params.width, params.height, targetW, targetH,
+                COLLAPSE_MS, easeCollapse)
+            fadeContent(to = 0f, startDelayMs = 0L)
+            return
+        }
+
+        val expanding = previous == Mode.IDLE || fromFlashStart ||
+            targetH > params.height
+        animateShape(params.width, params.height, targetW, targetH,
+            EXPAND_MS, springExpand)
+        if (previous == Mode.IDLE) {
+            // Content fades in once the pill is wide enough (iPhone-like).
+            setContentAlpha(0f)
+            fadeContent(to = 1f, startDelayMs = EXPAND_MS * 3 / 5)
+        } else if (expanding && previous != mode) {
+            fadeContent(to = 1f, startDelayMs = 0L)
+        } else {
+            setContentAlpha(1f)
+        }
+    }
+
+    // -- per-mode content ------------------------------------------------
+
+    private fun setIconSize(sizePx: Int) {
+        val lp = iconView.layoutParams
+        lp.width = sizePx
+        lp.height = sizePx
+        iconView.layoutParams = lp
+    }
+
+    private fun applyFlashContent() {
+        val alert = currentAlert ?: return
+        setIconSize(dp(32))
+        iconView.scaleType = ImageView.ScaleType.CENTER_CROP
+        iconView.imageTintList = null
+        iconView.setImageDrawable(alert.icon)
+        appLabelView.text = alert.appLabel
+        bodyView.maxLines = MAX_BODY_LINES
+        bodyView.text = alert.text.ifBlank { alert.title }
+        appLabelView.visibility = View.VISIBLE
+        textColumn.visibility = View.VISIBLE
+        eqContainer.visibility = View.GONE
+        controlsRow.visibility = View.GONE
+    }
+
+    private fun applyMediaContent() {
+        val media = DynamicIsland.mediaState ?: return
+        if (userExpanded) {
+            setIconSize(dp(48))
+            textColumn.visibility = View.VISIBLE
+            appLabelView.visibility = View.VISIBLE
+            appLabelView.text = media.artist.ifBlank { media.appLabel }
+            bodyView.text = media.title.ifBlank { media.appLabel }
+            bodyView.maxLines = 1
+            controlsRow.visibility = View.VISIBLE
+            btnPlay.setImageResource(
+                if (media.playing) R.drawable.ic_pause else R.drawable.ic_play
+            )
+        } else {
+            setIconSize(dp(28))
+            textColumn.visibility = View.GONE
+            controlsRow.visibility = View.GONE
+        }
+        iconView.scaleType = ImageView.ScaleType.CENTER_CROP
+        iconView.imageTintList = null
+        if (media.art != null) {
+            iconView.setImageBitmap(media.art)
+        } else {
+            iconView.setImageResource(R.drawable.ic_music)
+            iconView.imageTintList = ColorStateList.valueOf(0xFF9E9EA7.toInt())
+            iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }
+    }
+
+    private fun applyCallContent() {
+        setIconSize(if (userExpanded) dp(22) else dp(18))
+        iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        iconView.imageTintList = ColorStateList.valueOf(0xFF30D158.toInt())
+        iconView.setImageResource(R.drawable.ic_call)
+        textColumn.visibility = View.VISIBLE
+        appLabelView.visibility = if (userExpanded) View.VISIBLE else View.GONE
+        appLabelView.text = "Call"
+        val start = DynamicIsland.callStartedAtElapsedMs
+        bodyView.maxLines = 1
+        bodyView.text = if (start != null) {
+            formatElapsed(SystemClock.elapsedRealtime() - start)
+        } else {
+            ""
+        }
+        eqContainer.visibility = View.GONE
+        controlsRow.visibility = View.GONE
+    }
+
+    private fun applyTimerContent() {
+        setIconSize(if (userExpanded) dp(22) else dp(18))
+        iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        iconView.imageTintList = ColorStateList.valueOf(0xFFFFD60A.toInt())
+        iconView.setImageResource(R.drawable.ic_timer)
+        textColumn.visibility = View.VISIBLE
+        appLabelView.visibility = if (userExpanded) View.VISIBLE else View.GONE
+        appLabelView.text =
+            if (DynamicIsland.timerState?.kind == TimerKind.STOPWATCH) "Stopwatch" else "Timer"
+        bodyView.maxLines = 1
+        bodyView.text = timerReadout()
+        eqContainer.visibility = View.GONE
+        controlsRow.visibility = View.GONE
+    }
+
+    private fun timerReadout(): String {
+        val t = DynamicIsland.timerState ?: return ""
+        val elapsed = SystemClock.elapsedRealtime() - t.startedAtElapsedMs
+        return if (t.kind == TimerKind.COUNTDOWN) {
+            formatElapsed(t.durationMs - elapsed)
+        } else {
+            formatElapsed(elapsed)
+        }
+    }
+
+    private fun formatElapsed(ms: Long): String {
+        val total = (ms / 1000).coerceAtLeast(0)
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val s = total % 60
+        return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
+        else String.format("%d:%02d", m, s)
+    }
+
+    // -- tickers & waveform ----------------------------------------------
+
+    private fun updateTicker() {
+        val need = mode == Mode.CALL || mode == Mode.TIMER
+        if (need && !tickerOn) {
+            tickerOn = true
+            tickOnce()
+            main.postDelayed(tickRunnable, TICK_MS)
+        } else if (!need && tickerOn) {
+            tickerOn = false
+            main.removeCallbacks(tickRunnable)
+        }
+    }
+
+    private fun tickOnce() {
+        when (mode) {
+            Mode.CALL -> {
+                val start = DynamicIsland.callStartedAtElapsedMs ?: return
+                bodyView.text = formatElapsed(SystemClock.elapsedRealtime() - start)
+            }
+            Mode.TIMER -> {
+                val t = DynamicIsland.timerState ?: return
+                if (t.kind == TimerKind.COUNTDOWN) {
+                    val remaining =
+                        t.durationMs - (SystemClock.elapsedRealtime() - t.startedAtElapsedMs)
+                    if (remaining <= 0) {
+                        DynamicIsland.stopTimer() // triggers refresh()
+                        return
+                    }
+                    bodyView.text = formatElapsed(remaining)
+                } else {
+                    bodyView.text =
+                        formatElapsed(SystemClock.elapsedRealtime() - t.startedAtElapsedMs)
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun updateEq() {
+        val show = mode == Mode.MEDIA && DynamicIsland.mediaState?.playing == true
+        eqContainer.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) startEq() else stopEq()
+    }
+
+    private fun startEq() {
+        if (eqAnimator != null) return
+        eqAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 620
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.RESTART
+            addUpdateListener { a ->
+                val t = (a.animatedValue as Float).toDouble()
+                eqBars.forEachIndexed { i, bar ->
+                    val phase = t * 2 * PI + i * 2.1
+                    val frac = 0.3 + 0.7 * abs(sin(phase))
+                    val lp = bar.layoutParams
+                    lp.height = (dp(18) * frac).toInt().coerceAtLeast(dp(3))
+                    bar.layoutParams = lp
+                }
+            }
+        }.also { it.start() }
+    }
+
+    private fun stopEq() {
+        eqAnimator?.cancel()
+        eqAnimator = null
+        eqBars.forEach { bar ->
+            val lp = bar.layoutParams
+            lp.height = dp(4)
+            bar.layoutParams = lp
+        }
+    }
+
+    // -- window plumbing ---------------------------------------------------
+
+    private fun applyTouchability(touchable: Boolean) {
+        val params = windowParams ?: return
+        val root = rootView ?: return
+        val newFlags = if (touchable) baseFlags()
+        else baseFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        if (params.flags != newFlags) {
+            params.flags = newFlags
+            try {
+                windowManager?.updateViewLayout(root, params)
+            } catch (_: Exception) {
+                // window already gone; nothing to do
+            }
+        }
+    }
+
     /**
-     * Height that fits the icon row or the full multi-line body, whichever is
-     * taller (never below the classic 56 dp expanded pill, never above
-     * [MAX_EXPANDED_HEIGHT_DP] so the island can't swallow the screen).
+     * Height that fits the icon row or the full multi-line flash body,
+     * whichever is taller (never below the classic 56 dp expanded pill, never
+     * above [MAX_EXPANDED_HEIGHT_DP] so the island can't swallow the screen).
      */
-    private fun computeExpandedHeight(): Int {
+    private fun computeFlashHeight(): Int {
         val contentWidth =
             (expandedWidthPx - dp(20) - dp(32) - dp(8)).coerceAtLeast(dp(40))
         val wSpec =
@@ -471,52 +860,24 @@ class OverlayForegroundService : Service() {
         )
     }
 
-    /** Notification dismissed (or removed) in the shade / by its app. */
-    fun onAlertRemoved(key: String) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            main.post { onAlertRemoved(key) }
-            return
-        }
-        if (currentAlert?.key != key) return
-        currentAlert = null
-        if (isExpanded) collapseToIdle()
-    }
-
-    private fun collapseToIdle() {
-        main.removeCallbacks(hideRunnable)
-        cancelAnimations()
-
-        val params = windowParams ?: return
-        if (!isExpanded) {
-            clearContent()
-            return
-        }
-        animateShape(
-            fromW = params.width,
-            fromH = params.height,
-            toW = compactWidthPx,
-            toH = compactHeightPx,
-            durationMs = COLLAPSE_MS,
-            interpolator = AccelerateInterpolator()
-        )
-        fadeContent(to = 0f, startDelayMs = 0L)
-        isExpanded = false
-    }
-
-    /** Called once the collapse finishes and on idle starts. */
-    private fun onIdle() {
-        isExpanded = false
-        clearContent()
+    private fun setContentAlpha(alpha: Float) {
+        iconView.alpha = alpha
+        textColumn.alpha = alpha
+        eqContainer.alpha = alpha
+        controlsRow.alpha = alpha
     }
 
     /** SECURITY: drop the in-memory content once it is no longer visible. */
     private fun clearContent() {
         currentAlert = null
         iconView.setImageDrawable(null)
+        iconView.setImageBitmap(null)
         appLabelView.text = ""
         bodyView.text = ""
-        iconView.alpha = 0f
-        textColumn.alpha = 0f
+        setContentAlpha(0f)
+        eqContainer.visibility = View.GONE
+        controlsRow.visibility = View.GONE
+        stopEq()
     }
 
     // ------------------------------------------------------------------
@@ -540,7 +901,11 @@ class OverlayForegroundService : Service() {
                 val t = it.animatedValue as Float
                 params.width = (fromW + (toW - fromW) * t).toInt()
                 params.height = (fromH + (toH - fromH) * t).toInt()
-                windowManager?.updateViewLayout(root, params)
+                try {
+                    windowManager?.updateViewLayout(root, params)
+                } catch (_: Exception) {
+                    // window already gone; nothing to do
+                }
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
@@ -557,7 +922,7 @@ class OverlayForegroundService : Service() {
                     } catch (_: Exception) {
                         // window already gone; nothing to do
                     }
-                    if (!isExpanded) onIdle()
+                    if (mode == Mode.IDLE) clearContent()
                 }
             })
         }
@@ -569,7 +934,9 @@ class OverlayForegroundService : Service() {
         val set = AnimatorSet()
         set.playTogether(
             ObjectAnimator.ofFloat(iconView, "alpha", iconView.alpha, to),
-            ObjectAnimator.ofFloat(textColumn, "alpha", textColumn.alpha, to)
+            ObjectAnimator.ofFloat(textColumn, "alpha", textColumn.alpha, to),
+            ObjectAnimator.ofFloat(eqContainer, "alpha", eqContainer.alpha, to),
+            ObjectAnimator.ofFloat(controlsRow, "alpha", controlsRow.alpha, to)
         )
         set.duration = 150L
         set.startDelay = startDelayMs
