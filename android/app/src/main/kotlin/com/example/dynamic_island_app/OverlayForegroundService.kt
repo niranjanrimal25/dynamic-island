@@ -133,10 +133,14 @@ class OverlayForegroundService : Service() {
 
     /**
      * Tap-to-open arming: a flash only becomes tappable once its expand
-     * animation finished, so an accidental tap on the compact pill never
-     * launches an app (it just expands, per Stage-1 behavior).
+     * animation finished, so an accidental tap while it grows can't hit it.
+     * Tap toggles the flash expanded/compact; long-press opens the source
+     * app (tap-to-open).
      */
     private var flashArmed = false
+
+    /** Flash detail state: true = full body, false = compact icon pill. */
+    private var flashExpanded = true
 
     private val flashArmedRunnable = Runnable {
         if (mode == Mode.FLASH) {
@@ -432,23 +436,29 @@ class OverlayForegroundService : Service() {
             addView(unlockView)
             setOnClickListener {
                 when (mode) {
-                    // Tap a persistent mode to expand/collapse its detail
-                    // view (media keeps its transport controls; it never
-                    // triggers a notification open action).
+                    // Tap any live mode to expand/collapse its detail view
+                    // (media keeps its transport controls).
                     Mode.MEDIA, Mode.CALL, Mode.TIMER -> {
                         userExpanded = !userExpanded
                         render()
                     }
-                    // Tap an EXPANDED (armed) flash to open what the real
-                    // notification would open; a tap before arming does
-                    // nothing (the pill is not even touchable yet).
+                    // Tap a flash (once armed) to toggle between the full
+                    // body and a compact icon pill. Long-press opens the
+                    // source app instead (tap-to-open).
                     Mode.FLASH -> {
                         if (flashArmed) {
-                            currentAlert?.let { a -> DynamicIsland.openAlert(a.key) }
+                            flashExpanded = !flashExpanded
+                            render()
                         }
                     }
                     else -> Unit
                 }
+            }
+            setOnLongClickListener {
+                if (mode == Mode.FLASH && flashArmed) {
+                    currentAlert?.let { a -> DynamicIsland.openAlert(a.key) }
+                    true
+                } else false
             }
         }
 
@@ -655,6 +665,7 @@ class OverlayForegroundService : Service() {
         currentAlert?.let { DynamicIsland.dropContentIntent(it.key) }
         currentAlert = alert
         flashArmed = false
+        flashExpanded = true
         main.postDelayed(flashArmedRunnable, EXPAND_MS)
         render(fromFlashStart = true)
 
@@ -726,8 +737,13 @@ class OverlayForegroundService : Service() {
             }
             Mode.FLASH -> {
                 applyFlashContent()
-                targetW = expandedWidthPx
-                targetH = computeFlashHeight()
+                if (flashExpanded) {
+                    targetW = expandedWidthPx
+                    targetH = computeFlashHeight()
+                } else {
+                    targetW = dp(112)
+                    targetH = dp(44)
+                }
             }
             Mode.MEDIA -> {
                 applyMediaContent()
@@ -816,15 +832,21 @@ class OverlayForegroundService : Service() {
     private fun applyFlashContent() {
         val alert = currentAlert ?: return
         iconView.visibility = View.VISIBLE
-        setIconSize(dp(32))
         iconView.scaleType = ImageView.ScaleType.CENTER_CROP
         iconView.imageTintList = null
         iconView.setImageDrawable(alert.icon)
-        appLabelView.text = alert.appLabel
-        bodyView.maxLines = MAX_BODY_LINES
-        bodyView.text = alert.text.ifBlank { alert.title }
-        appLabelView.visibility = View.VISIBLE
-        textColumn.visibility = View.VISIBLE
+        if (flashExpanded) {
+            setIconSize(dp(32))
+            appLabelView.text = alert.appLabel
+            bodyView.maxLines = MAX_BODY_LINES
+            bodyView.text = alert.text.ifBlank { alert.title }
+            appLabelView.visibility = View.VISIBLE
+            textColumn.visibility = View.VISIBLE
+        } else {
+            // Compact: just the app icon pill; tap to expand again.
+            setIconSize(dp(28))
+            textColumn.visibility = View.GONE
+        }
         eqContainer.visibility = View.GONE
         controlsRow.visibility = View.GONE
     }
@@ -1020,13 +1042,22 @@ class OverlayForegroundService : Service() {
         val root = rootView ?: return
         val newFlags = if (touchable) baseFlags()
         else baseFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        if (params.flags != newFlags) {
-            params.flags = newFlags
-            try {
-                windowManager?.updateViewLayout(root, params)
-            } catch (_: Exception) {
-                // window already gone; nothing to do
-            }
+        if (params.flags == newFlags) return
+        params.flags = newFlags
+        val wm = windowManager ?: return
+        // Some OEM skins silently ignore flag changes made through
+        // updateViewLayout, leaving the pill permanently untouchable
+        // ("taps do nothing" on certain devices). Re-adding the window is
+        // the reliable path: flags are guaranteed to be re-read at addView.
+        try {
+            wm.removeViewImmediate(root)
+        } catch (_: Exception) {
+            // already detached
+        }
+        try {
+            wm.addView(root, params)
+        } catch (_: Exception) {
+            // window manager gone (service stopping)
         }
     }
 

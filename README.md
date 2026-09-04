@@ -230,17 +230,21 @@ at the same time the highest priority wins the screen:
 4. **Notification flash** — a *temporary interrupt*: it briefly shows on top
    of any live persistent mode, then the pill reverts to the persistent state
    underneath (media/call/timer are never lost). Among persistent modes the
-   priority is call > timer > media. **Tap-to-open:** once the flash has
-   expanded (armed after the 220 ms expand), tapping it fires the original
-   notification's `contentIntent` — exactly what tapping it in the shade
-   would do — and collapses. A `CanceledException` (source app gone) just
-   collapses silently. The `PendingIntent` lives in a RAM-only map keyed by
-   notification key and is discarded on replace, auto-collapse, shade
-   removal, tap, or service death; only the key ever crosses the channel
-   (`openNotification(id)`).
+   priority is call > timer > media. **Tap & long-press:** once the flash
+   has expanded (armed after the 220 ms grow), **tapping toggles it**
+   between the full body and a compact icon pill; **long-pressing** fires
+   the original notification's `contentIntent` — exactly what tapping it in
+   the shade would do — and collapses (tap-to-open). A `CanceledException`
+   (source app gone) just collapses silently. The `PendingIntent` lives in a
+   RAM-only map keyed by notification key and is discarded on replace,
+   auto-collapse, shade removal, open, or service death; only the key ever
+   crosses the channel (`openNotification(id)`).
 
-Tap a persistent pill to expand/collapse its detail view. Expand/collapse use
-a spring-like `PathInterpolator(0.34, 1.56, 0.64, 1)` (mirrored in Dart by
+Tap any live pill — flash, media, call, or timer — to expand/collapse it.
+Touchability is applied by removing and re-adding the overlay window
+(some OEM skins ignore `updateViewLayout` flag changes, which used to make
+the pill untappable). Expand/collapse use a spring-like
+`PathInterpolator(0.34, 1.56, 0.64, 1)` (mirrored in Dart by
 `Curves.easeOutBack`).
 
 **Lock screen:** Android never allows `TYPE_APPLICATION_OVERLAY` windows on
