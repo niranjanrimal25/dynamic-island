@@ -242,6 +242,15 @@ class _HomeScreenState extends State<HomeScreen>
             subtitle: 'Draws the floating pill above every app. Android '
                 'requires opening the special "Display over other apps" '
                 'settings page — there is no normal permission dialog.',
+            why: 'Android does not offer a normal allow/deny dialog for '
+                'drawing over other apps — it can only be granted on the '
+                'special "Display over other apps" settings page, which is '
+                'why the button below deep-links there '
+                '(Settings.ACTION_MANAGE_OVERLAY_PERMISSION). Without it the '
+                'system rejects Isle\'s overlay window and the pill cannot '
+                'appear above other apps. The pill never blocks touches: '
+                'taps outside it pass straight through.',
+            whyActionLabel: 'Open the settings page',
             granted: s.canDrawOverlays,
             grantedLabel: 'Granted',
             actionLabel: 'Open settings',
@@ -253,6 +262,16 @@ class _HomeScreenState extends State<HomeScreen>
             subtitle: 'Lets the listener read incoming notification titles '
                 'and text (kept in memory only, never stored). Must be '
                 'toggled on manually inside the system screen.',
+            why: 'Reading other apps\' notifications is so sensitive that '
+                'Android provides no runtime dialog for it at all — you must '
+                'find Isle in the system "Notification access" screen '
+                '(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) and flip '
+                'the toggle yourself. Isle uses it only to mirror '
+                'notifications into the island: content lives in RAM for the '
+                'seconds it is visible and is never written to disk or sent '
+                'anywhere (the app has no INTERNET permission in any build '
+                'variant).',
+            whyActionLabel: 'Open the settings page',
             granted: s.notificationAccessGranted,
             grantedLabel: 'Listening',
             actionLabel: 'Enable access',
@@ -274,6 +293,14 @@ class _HomeScreenState extends State<HomeScreen>
             title: 'Battery optimization exemption',
             subtitle: 'Prevents Android from killing the overlay service, so '
                 'it survives closing the app and restarts after a reboot.',
+            why: 'Without the exemption, aggressive battery management can '
+                'kill the background service minutes after you close the '
+                'app, and the island would stop until you reopen Isle. '
+                'Requesting it shows Android\'s one-time "Don\'t optimize" '
+                'dialog (ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS); if '
+                'Isle is already exempt nothing appears and the full list '
+                'screen opens instead.',
+            whyActionLabel: 'Request exemption',
             granted: s.ignoringBatteryOptimizations,
             grantedLabel: 'Exempt',
             actionLabel: 'Request exemption',
@@ -589,6 +616,8 @@ class _PermissionTile extends StatelessWidget {
     required this.grantedLabel,
     required this.actionLabel,
     required this.onAction,
+    this.why,
+    this.whyActionLabel,
   });
 
   final IconData icon;
@@ -599,20 +628,61 @@ class _PermissionTile extends StatelessWidget {
   final String actionLabel;
   final VoidCallback onAction;
 
+  /// Longer "why is this needed" explanation, shown in a dedicated dialog
+  /// (Android's special-access grants have no normal runtime dialog, so the
+  /// app must explain them itself before deep-linking to system settings).
+  final String? why;
+  final String? whyActionLabel;
+
+  void _showWhy(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(icon, size: 36),
+        title: Text(title),
+        content: Text(why ?? subtitle),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              onAction();
+            },
+            child: Text(whyActionLabel ?? actionLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
       subtitle: Text(subtitle),
-      trailing: granted
-          ? Chip(
-              avatar: Icon(Icons.check_circle,
-                  size: 18, color: Colors.greenAccent),
-              label: Text(grantedLabel),
-              visualDensity: VisualDensity.compact,
-            )
-          : TextButton(onPressed: onAction, child: Text(actionLabel)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (why != null)
+            IconButton(
+              tooltip: 'Why is this needed?',
+              icon: const Icon(Icons.info_outline),
+              onPressed: () => _showWhy(context),
+            ),
+          granted
+              ? Chip(
+                  avatar: Icon(Icons.check_circle,
+                      size: 18, color: Colors.greenAccent),
+                  label: Text(grantedLabel),
+                  visualDensity: VisualDensity.compact,
+                )
+              : TextButton(onPressed: onAction, child: Text(actionLabel)),
+        ],
+      ),
     );
   }
 }

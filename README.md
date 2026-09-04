@@ -234,6 +234,23 @@ the real feature depends on it.
 | `status_events` | native → Dart | `"status"` ping (UI re-reads flags) |
 | `alert_events` | native → Dart | transient alert preview while the app UI is open (icon intentionally stays native) |
 
+**Why MethodChannel for commands but EventChannel for alerts?**
+A `MethodChannel` is request/response: Dart invokes a method and awaits one
+reply — perfect for `getStatus`, `setEnabled`, settings deep-links or
+`startCountdown`. Notification alerts are the opposite shape: the native
+`NotificationListenerService` produces an unbounded stream of events at
+times Dart never requests. `EventChannel` models exactly that — Dart opens a
+broadcast stream (`receiveBroadcastStream`) and the native side holds an
+`EventSink` to push into whenever an alert arrives, closing it when the UI
+detaches. Using a MethodChannel here would force polling or inverted calls;
+the EventChannel is the push-based primitive made for this.
+
+**Replace, not queue.** When a new notification arrives while one is
+showing, the island *replaces* it in place (height/content morph) instead of
+queueing: the island mirrors the "now" of the shade, queued stale alerts
+would pop up late and surprising, and bursts (chats, downloads) would keep
+the pill expanded for minutes. See `showAlert`'s doc comment.
+
 ---
 
 ## Tuning

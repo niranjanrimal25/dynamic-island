@@ -69,10 +69,10 @@ class OverlayForegroundService : Service() {
         private const val CHANNEL_ID = "dynamic_island_service"
         private const val NOTIFICATION_ID = 9001
 
-        // Time budget: expand 220 ms, hold ~3.4 s (longer for longer text),
+        // Time budget: expand 220 ms, hold ~4.2 s (longer for longer text),
         // collapse 260 ms.
         private const val EXPAND_MS = 220L
-        private const val HOLD_MS = 3400L
+        private const val HOLD_MS = 4200L
         private const val COLLAPSE_MS = 260L
 
         /** Extra hold time per character of body text, capped. */
@@ -527,6 +527,15 @@ class OverlayForegroundService : Service() {
     /**
      * Called by [DynamicIsland.dispatchAlert] (listener thread) and from
      * [onStartCommand] (main thread). Safe from either.
+     *
+     * REPLACE vs QUEUE: when a new alert arrives while one is showing we
+     * REPLACE it (smoothly refreshing in place) instead of queueing. Reasons:
+     *  - the island mirrors the *now* of the notification shade — a queued
+     *    stale alert that pops up 10 s late is surprising, not helpful;
+     *  - bursts (chat threads, download spams) would otherwise keep the
+     *    pill expanded for minutes;
+     *  - the in-place refresh animates the height/content change, which
+     *    reads as one fluid island, matching iOS behavior.
      */
     fun showAlert(alert: NotificationAlert) {
         if (Looper.myLooper() != Looper.getMainLooper()) {

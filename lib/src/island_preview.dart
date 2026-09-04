@@ -69,7 +69,7 @@ class _IslandPreviewState extends State<IslandPreview>
   static const double _maxExpandedH = 160;
   static const int _maxBodyLines = 4;
   static const Duration _expandDuration = Duration(milliseconds: 220);
-  static const Duration _baseHoldDuration = Duration(milliseconds: 3400);
+  static const Duration _baseHoldDuration = Duration(milliseconds: 4200);
   static const Duration _collapseDuration = Duration(milliseconds: 260);
 
   static const TextStyle _labelStyle = TextStyle(

@@ -37,9 +37,10 @@ void main() {
     expect(find.text('Messages'), findsOneWidget);
     expect(find.text('Hey, are you free tonight?'), findsOneWidget);
 
-    // After the 3.4 s hold the pill starts collapsing; a little later the
-    // collapse finishes and the in-memory content is dropped.
-    await tester.pump(const Duration(seconds: 4));
+    // After the ~4.4 s hold (4.2 s base + per-character extra) the pill
+    // starts collapsing; a little later the collapse finishes and the
+    // in-memory content is dropped.
+    await tester.pump(const Duration(seconds: 5));
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Messages'), findsNothing);
     expect(find.text('Hey, are you free tonight?'), findsNothing);
