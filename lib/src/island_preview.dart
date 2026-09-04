@@ -196,7 +196,7 @@ class _IslandPreviewState extends State<IslandPreview>
       (data) {
         if (!mounted) return;
         setState(() { _timerData = data; if (data == null) _timerExpanded = false; });
-        if (_current == null && _media == null) _retarget();
+        if (_current == null) _retarget();
       },
       onError: (Object _, StackTrace _) {},
     );
@@ -204,7 +204,7 @@ class _IslandPreviewState extends State<IslandPreview>
       (data) {
         if (!mounted) return;
         setState(() { _callData = data; if (data == null) _callExpanded = false; });
-        if (_current == null && _media == null) _retarget();
+        if (_current == null) _retarget();
       },
       onError: (Object _, StackTrace _) {},
     );
