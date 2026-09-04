@@ -17,6 +17,7 @@ class IslandStatus {
     this.timerActive = false,
     this.callActive = false,
     this.mediaActive = false,
+    this.unlockFlourish = false,
   });
 
   factory IslandStatus.fromMap(Map<dynamic, dynamic> map) {
@@ -32,6 +33,7 @@ class IslandStatus {
       timerActive: b('timerActive'),
       callActive: b('callActive'),
       mediaActive: b('mediaActive'),
+      unlockFlourish: b('unlockFlourish'),
     );
   }
 
@@ -49,6 +51,9 @@ class IslandStatus {
   final bool timerActive;
   final bool callActive;
   final bool mediaActive;
+
+  /// User preference: show the brief unlock flourish (default off).
+  final bool unlockFlourish;
 
   bool get allSetupDone =>
       overlayEnabled &&
@@ -109,6 +114,11 @@ class NativeBridge {
   /// RAM-only on the native side — never persisted.
   static Future<void> startCountdown(int seconds) =>
       _service.invokeMethod<void>('startCountdown', {'seconds': seconds});
+
+  /// Opt-in unlock flourish (brief open-lock glyph after ACTION_USER_PRESENT).
+  /// Defaults to OFF so nothing appears over apps after an unlock.
+  static Future<void> setUnlockFlourish(bool enabled) =>
+      _service.invokeMethod<void>('setUnlockFlourish', {'enabled': enabled});
 
   static Future<void> startStopwatch() =>
       _service.invokeMethod<void>('startStopwatch');

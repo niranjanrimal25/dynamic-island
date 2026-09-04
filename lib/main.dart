@@ -56,6 +56,7 @@ class _HomeScreenState extends State<HomeScreen>
     timerActive: false,
     callActive: false,
     mediaActive: false,
+    unlockFlourish: false,
   );
   bool _loading = true;
   bool _busy = false;
@@ -327,11 +328,23 @@ class _HomeScreenState extends State<HomeScreen>
               'media > notification flash.',
             ),
           ),
+          SwitchListTile(
+            secondary: const Icon(Icons.lock_open, size: 20),
+            title: const Text('Unlock flourish'),
+            subtitle: const Text(
+              'Off by default: after unlocking, the island shows nothing '
+              'over your apps. Enable to get a brief open-lock glyph in the '
+              'pill right after each unlock.',
+            ),
+            value: _status.unlockFlourish,
+            onChanged: (v) => NativeBridge.setUnlockFlourish(v),
+          ),
           _Bullet(
             icon: Icons.music_note_outlined,
-            text: 'Media: while any app (Spotify, YouTube Music, ...) plays, '
-                'the island shows album art + a waveform. Tap it for '
-                'play/pause/skip controls.',
+            text: 'Media: while any app (Spotify, YouTube Music, ...) is '
+                'actively playing, the island shows album art + a waveform. '
+                'Tap it for play/pause/skip controls. Paused/stopped apps '
+                'never pin a pill.',
           ),
           _Bullet(
             icon: Icons.call_outlined,

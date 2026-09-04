@@ -74,6 +74,7 @@ object DynamicIsland {
 
     private const val PREFS_NAME = "dynamic_island_prefs"
     private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
+    private const val KEY_UNLOCK_FLOURISH = "unlock_flourish"
 
     const val SERVICE_CHANNEL_ID = "dynamic_island_service"
     const val SERVICE_NOTIFICATION_ID = 9001
@@ -261,6 +262,20 @@ object DynamicIsland {
 
     fun setOverlayEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_OVERLAY_ENABLED, enabled).apply()
+    }
+
+    /**
+     * Unlock flourish (open-lock glyph on ACTION_USER_PRESENT). OFF by
+     * default: right after an unlock the island must not put anything over
+     * the user's apps unless they explicitly opted into the flourish.
+     * (User preference only — never content.)
+     */
+    fun isUnlockFlourishEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_UNLOCK_FLOURISH, false)
+
+    fun setUnlockFlourishEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_UNLOCK_FLOURISH, enabled).apply()
+        notifyStatusChanged()
     }
 
     // ------------------------------------------------------------------

@@ -44,6 +44,11 @@ class MainActivity : FlutterActivity() {
                     DynamicIsland.notifyStatusChanged()
                     result.success(null)
                 }
+                "setUnlockFlourish" -> {
+                    val on = call.argument<Boolean>("enabled") ?: false
+                    DynamicIsland.setUnlockFlourishEnabled(this, on)
+                    result.success(null)
+                }
                 "openOverlayPermissionSettings" -> {
                     val intent = Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -249,6 +254,7 @@ class MainActivity : FlutterActivity() {
                 DynamicIsland.isIgnoringBatteryOptimizations(this),
             "postNotificationsPermission" to postNotif,
             "phoneStatePermission" to phoneState,
+            "unlockFlourish" to DynamicIsland.isUnlockFlourishEnabled(this),
             "timerActive" to (DynamicIsland.timerState != null),
             "callActive" to (DynamicIsland.callStartedAtElapsedMs != null),
             "mediaActive" to (DynamicIsland.mediaState != null)
