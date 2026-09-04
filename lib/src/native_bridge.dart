@@ -19,6 +19,7 @@ class IslandStatus {
     this.mediaActive = false,
     this.unlockFlourish = false,
     this.dismissOverlayWarning = true,
+    this.islandOnly = true,
   });
 
   factory IslandStatus.fromMap(Map<dynamic, dynamic> map) {
@@ -36,6 +37,7 @@ class IslandStatus {
       mediaActive: b('mediaActive'),
       unlockFlourish: b('unlockFlourish'),
       dismissOverlayWarning: b('dismissOverlayWarning'),
+      islandOnly: (map['islandOnly'] as bool?) ?? true,
     );
   }
 
@@ -60,6 +62,10 @@ class IslandStatus {
   /// User preference: auto-dismiss the OS "displaying over other apps"
   /// notice (default on).
   final bool dismissOverlayWarning;
+
+  /// Island-only mode: notifications shown ONLY in the island, removed
+  /// from the system shade (default on).
+  final bool islandOnly;
 
   bool get allSetupDone =>
       overlayEnabled &&
@@ -130,6 +136,11 @@ class NativeBridge {
   static Future<void> setDismissOverlayWarning(bool enabled) =>
       _service.invokeMethod<void>(
           'setDismissOverlayWarning', {'enabled': enabled});
+
+  /// Island-only mode: notifications appear ONLY in the island, not in the
+  /// system shade (ongoing notifications such as media/call stay).
+  static Future<void> setIslandOnly(bool enabled) =>
+      _service.invokeMethod<void>('setIslandOnly', {'enabled': enabled});
 
   static Future<void> startStopwatch() =>
       _service.invokeMethod<void>('startStopwatch');

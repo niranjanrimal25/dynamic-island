@@ -54,6 +54,11 @@ class MainActivity : FlutterActivity() {
                     DynamicIsland.setDismissOverlayWarningEnabled(this, on)
                     result.success(null)
                 }
+                "setIslandOnly" -> {
+                    val on = call.argument<Boolean>("enabled") ?: true
+                    DynamicIsland.setIslandOnlyEnabled(this, on)
+                    result.success(null)
+                }
                 "openOverlayPermissionSettings" -> {
                     val intent = Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -262,6 +267,7 @@ class MainActivity : FlutterActivity() {
             "unlockFlourish" to DynamicIsland.isUnlockFlourishEnabled(this),
             "dismissOverlayWarning" to
                 DynamicIsland.isDismissOverlayWarningEnabled(this),
+            "islandOnly" to DynamicIsland.isIslandOnlyEnabled(this),
             "timerActive" to (DynamicIsland.timerState != null),
             "callActive" to (DynamicIsland.callStartedAtElapsedMs != null),
             "mediaActive" to (DynamicIsland.mediaState != null)

@@ -161,6 +161,16 @@ Then:
    `NotificationAlert` (RAM only): key, package, app label, title, text, icon
    — and hands it to `DynamicIsland.dispatchAlert`.
 
+   **Island-only mode (default ON, opt-out in Permissions):** regular
+   notifications appear *only* in the island — right after reading one, the
+   listener cancels the system copy (`cancelNotification(key)`), so the
+   notification shade never accumulates them. The trade-off you choose: once
+   the brief flash ends, there is no shade history or quick reply for that
+   notice (nothing is stored to disk). Ongoing notifications (media players,
+   calls, downloads) are **exempt** — cancelling them would strip live
+   playback/call controls and the apps re-post them anyway — and keep
+   mirroring into the island as before.
+
 2. **DynamicIsland** (native) — in-memory alert bus. Forwards to the running
    overlay service (or holds one alert while the service starts). Also exposes
    the ON/OFF boolean and permission checks.

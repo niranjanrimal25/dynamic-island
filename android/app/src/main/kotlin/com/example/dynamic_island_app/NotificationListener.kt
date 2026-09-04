@@ -47,9 +47,10 @@ class NotificationListener : NotificationListenerService() {
         if (!DynamicIsland.isOverlayEnabled(this)) return
 
         // Ongoing notifications (a minimized music player, download bars,
-        // other apps' foreground services) are intentionally INCLUDED: the
-        // island mirrors everything the shade shows, so minimizing a media
-        // player keeps surfacing its track info in the island.
+        // other apps' foreground services) are always mirrored and kept in
+        // the shade — they hold live controls. Regular notifications are
+        // shown as the island flash and (island-only mode, default) then
+        // removed from the shade.
 
         val extras = sbn.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)
@@ -98,6 +99,15 @@ class NotificationListener : NotificationListenerService() {
             // only, keyed by [key], for as long as the island shows it.
             contentIntent = sbn.notification.contentIntent
         )
+
+        // Island-only mode: the notification exists ONLY as the island
+        // flash — the system copy is cancelled so the shade never keeps it
+        // (no shade history, no quick reply). Ongoing notifications (media
+        // players, calls, downloads) are exempt: cancelling those would
+        // strip playback/call controls and apps re-post them anyway.
+        if (!sbn.isOngoing && DynamicIsland.isIslandOnlyEnabled(this)) {
+            cancelNotification(sbn.key)
+        }
 
         DynamicIsland.dispatchAlert(this, alert)
     }

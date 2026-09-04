@@ -76,6 +76,7 @@ object DynamicIsland {
     private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
     private const val KEY_UNLOCK_FLOURISH = "unlock_flourish"
     private const val KEY_DISMISS_OVERLAY_WARNING = "dismiss_overlay_warning"
+    private const val KEY_ISLAND_ONLY = "island_only"
 
     const val SERVICE_CHANNEL_ID = "dynamic_island_service"
     const val SERVICE_NOTIFICATION_ID = 9001
@@ -290,6 +291,21 @@ object DynamicIsland {
 
     fun setDismissOverlayWarningEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_DISMISS_OVERLAY_WARNING, enabled).apply()
+        notifyStatusChanged()
+    }
+
+    /**
+     * Island-only mode: notifications are shown ONLY as the island flash —
+     * the listener cancels the system copy so the shade never keeps them
+     * (default ON per user request; opt out in the app). Ongoing
+     * notifications (media players, calls) are exempt: cancelling those
+     * would remove playback/call controls, and apps re-post them anyway.
+     */
+    fun isIslandOnlyEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_ISLAND_ONLY, true)
+
+    fun setIslandOnlyEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_ISLAND_ONLY, enabled).apply()
         notifyStatusChanged()
     }
 

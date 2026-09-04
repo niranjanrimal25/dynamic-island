@@ -58,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen>
     mediaActive: false,
     unlockFlourish: false,
     dismissOverlayWarning: true,
+    islandOnly: true,
   );
   bool _loading = true;
   bool _busy = false;
@@ -290,6 +291,20 @@ class _HomeScreenState extends State<HomeScreen>
             grantedLabel: 'Listening',
             actionLabel: 'Enable access',
             onAction: () => NativeBridge.openNotificationAccessSettings(),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.do_not_disturb_on_outlined, size: 20),
+            title: const Text('Island-only notifications'),
+            subtitle: const Text(
+              'Notifications show ONLY in the island — the system copy is '
+              'dismissed instantly, so the shade never collects them. '
+              'Trade-off: no shade history or quick reply once the flash '
+              'ends. Ongoing notifications (media players, calls) always '
+              'stay in the shade so their controls keep working. Turn off '
+              'to mirror normally.',
+            ),
+            value: s.islandOnly,
+            onChanged: (v) => NativeBridge.setIslandOnly(v),
           ),
           if (!s.postNotificationsPermission)
             _PermissionTile(
