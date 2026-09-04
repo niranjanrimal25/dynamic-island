@@ -9,6 +9,7 @@ import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 
 /**
  * Tracks active media sessions of ANY app (Spotify, YouTube Music, ...) via
@@ -111,26 +112,54 @@ object IslandMediaTracker {
         update(context)
     }
 
-    /** Picks the playing (else paused) session and publishes it. */
+    /**
+     * Picks the session to show and publishes it.
+     *
+     * Selection logic (multiple simultaneous sessions are rare but possible):
+     *  1. A PLAYING session always beats a paused one — audible media is what
+     *     the island should mirror.
+     *  2. Within that group, the MOST RECENTLY ACTIVE session wins, measured
+     *     by PlaybackState.lastPositionUpdateTime (the elapsedRealtime of the
+     *     last position report — i.e. the session that last actually moved).
+     *  3. Only if nothing is playing do we fall back to paused sessions,
+     *     again most-recent first, so a just-paused player stays resumable
+     *     from the island.
+     */
     private fun update(context: Context) {
-        val chosen = controllers.firstOrNull {
+        val playing = controllers.filter {
             it.playbackState?.state == PlaybackState.STATE_PLAYING
-        } ?: controllers.firstOrNull {
+        }
+        val paused = controllers.filter {
             it.playbackState?.state == PlaybackState.STATE_PAUSED
         }
+        val chosen = (playing.ifEmpty { paused })
+            .maxByOrNull { it.playbackState?.lastPositionUpdateTime ?: 0L }
 
         val state = chosen?.let { c ->
             val meta = c.metadata
+            val ps = c.playbackState
+            val isPlaying = ps?.state == PlaybackState.STATE_PLAYING
             val art = runCatching {
                 meta?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
                     ?: meta?.getBitmap(MediaMetadata.METADATA_KEY_ART)
             }.getOrNull()?.downsample(128)
+            val basePosition = ps?.position?.coerceAtLeast(0L) ?: 0L
+            val position = if (isPlaying && ps != null) {
+                // Extrapolate: position advances while playing.
+                basePosition +
+                    (SystemClock.elapsedRealtime() - ps.lastPositionUpdateTime)
+            } else {
+                basePosition
+            }
             MediaState(
                 appLabel = labelFor(context, c.packageName),
                 title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty(),
                 artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty(),
                 art = art,
-                playing = c.playbackState?.state == PlaybackState.STATE_PLAYING,
+                playing = isPlaying,
+                positionMs = position.coerceAtLeast(0L),
+                durationMs = (meta?.getLong(MediaMetadata.METADATA_KEY_DURATION)
+                    ?: 0L).coerceAtLeast(0L),
                 controller = c
             )
         }

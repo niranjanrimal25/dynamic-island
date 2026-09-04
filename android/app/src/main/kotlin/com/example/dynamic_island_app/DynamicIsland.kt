@@ -41,6 +41,8 @@ class MediaState(
     val artist: String,
     val art: Bitmap?,
     val playing: Boolean,
+    val positionMs: Long,
+    val durationMs: Long,
     val controller: MediaController
 )
 
@@ -102,6 +104,7 @@ object DynamicIsland {
     /** Called by the trackers whenever live state changes (any thread). */
     fun onLiveStateChanged() {
         OverlayForegroundService.instance?.refresh()
+        forwardMediaState()
         notifyStatusChanged()
     }
 
@@ -162,6 +165,45 @@ object DynamicIsland {
             "text" to alert.text
         )
         mainHandler.post { sink.success(data) }
+    }
+
+    // Live *media* previews for the in-app island mirror. Push-based: sent
+    // whenever the native MediaController callbacks fire — never polled.
+    // SECURITY: transient in-process copies only; the art travels as an
+    // in-memory PNG byte array that Dart renders straight from memory.
+    @Volatile
+    private var mediaSink: EventChannel.EventSink? = null
+
+    fun setMediaSink(sink: EventChannel.EventSink?) {
+        mediaSink = sink
+        // Late-attaching UI gets the current state immediately.
+        sink?.let { mainHandler.post { it.success(mediaEventPayload(mediaState)) } }
+    }
+
+    private fun mediaEventPayload(state: MediaState?): Map<String, Any?>? {
+        if (state == null) return null
+        val artBytes = state.art?.let { bmp ->
+            val out = java.io.ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.PNG, 90, out)
+            out.toByteArray()
+        }
+        return mapOf(
+            "appLabel" to state.appLabel,
+            "title" to state.title,
+            "artist" to state.artist,
+            "playing" to state.playing,
+            "positionMs" to state.positionMs,
+            "durationMs" to state.durationMs,
+            "asOfEpochMs" to System.currentTimeMillis(),
+            "art" to artBytes
+        )
+    }
+
+    /** Push the current media state to the Flutter mirror (any thread). */
+    fun forwardMediaState() {
+        val sink = mediaSink ?: return
+        val payload = mediaEventPayload(mediaState)
+        mainHandler.post { sink.success(payload) }
     }
 
     // ------------------------------------------------------------------
@@ -251,13 +293,16 @@ object DynamicIsland {
     // Alert flow (NotificationListener -> overlay service)
     // ------------------------------------------------------------------
 
-    /** Single entry point for an incoming alert (called on the listener thread). */
+    /** Single entry point for an incoming alert (called on the listener thread).
+     *
+     * A flash is a TEMPORARY interrupt: it shows even while a persistent mode
+     * (media/call/timer) is active, and the pill reverts to that persistent
+     * state as soon as the flash collapses — the persistent state underneath
+     * is never touched.
+     */
     fun dispatchAlert(context: Context, alert: NotificationAlert) {
         if (!isOverlayEnabled(context)) return
         forwardAlertPreview(alert)
-        // Priority order: call > timer > media > notification flash. A flash
-        // never interrupts a live persistent mode.
-        if (hasPersistentMode()) return
         OverlayForegroundService.instance?.let {
             it.showAlert(alert)
             return

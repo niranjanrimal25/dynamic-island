@@ -143,6 +143,27 @@ class MainActivity : FlutterActivity() {
                     DynamicIsland.stopTimer()
                     result.success(null)
                 }
+                // Playback control for the island's media mode: forwarded to
+                // the currently mirrored session's transport controls.
+                "mediaPlayPause" -> {
+                    val c = DynamicIsland.mediaState?.controller
+                    if (DynamicIsland.mediaState?.playing == true) {
+                        c?.transportControls?.pause()
+                    } else {
+                        c?.transportControls?.play()
+                    }
+                    result.success(null)
+                }
+                "mediaNext" -> {
+                    DynamicIsland.mediaState?.controller?.transportControls
+                        ?.skipToNext()
+                    result.success(null)
+                }
+                "mediaPrev" -> {
+                    DynamicIsland.mediaState?.controller?.transportControls
+                        ?.skipToPrevious()
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -179,6 +200,22 @@ class MainActivity : FlutterActivity() {
 
             override fun onCancel(arguments: Any?) {
                 DynamicIsland.setAlertSink(null)
+            }
+        })
+
+        // Stream of live *media* previews (title/artist/art bytes/playing/
+        // position/duration), pushed whenever the native MediaController
+        // callbacks fire — event-driven, never polled. In-memory only.
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.dynamic_island_app/media_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                DynamicIsland.setMediaSink(events)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                DynamicIsland.setMediaSink(null)
             }
         })
     }

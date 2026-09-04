@@ -72,6 +72,8 @@ class NativeBridge {
       EventChannel('com.example.dynamic_island_app/status_events');
   static const EventChannel _alertEvents =
       EventChannel('com.example.dynamic_island_app/alert_events');
+  static const EventChannel _mediaEvents =
+      EventChannel('com.example.dynamic_island_app/media_events');
 
   static Future<IslandStatus> fetchStatus() async {
     final map = await _service.invokeMapMethod<dynamic, dynamic>('getStatus');
@@ -131,4 +133,22 @@ class NativeBridge {
       _alertEvents.receiveBroadcastStream().map(
             (e) => (e as Map).cast<String, dynamic>(),
           );
+
+  /// Live media-session previews (title/artist/art bytes/playing/position/
+  /// duration), pushed event-driven from the native MediaController
+  /// callbacks. Emits `null` when no session is active. In-memory only —
+  /// the art bytes are rendered straight from RAM, never written to disk.
+  static Stream<Map<String, dynamic>?> mediaEvents() =>
+      _mediaEvents.receiveBroadcastStream().map(
+            (e) => (e as Map?)?.cast<String, dynamic>(),
+          );
+
+  /// Playback controls for the mirrored media session (forwarded to
+  /// MediaController.transportControls on the native side).
+  static Future<void> mediaPlayPause() =>
+      _service.invokeMethod<void>('mediaPlayPause');
+
+  static Future<void> mediaNext() => _service.invokeMethod<void>('mediaNext');
+
+  static Future<void> mediaPrev() => _service.invokeMethod<void>('mediaPrev');
 }

@@ -202,10 +202,22 @@ at the same time the highest priority wins the screen:
    survive a process restart) and ticks live in the pill.
 3. **Media** — `IslandMediaTracker` uses `MediaSessionManager`
    (gated behind the notification-access grant, no extra permission) to track
-   active sessions of any app. While something plays, the compact pill shows
-   album art + an animated waveform; tapping expands to title/artist and real
-   play/pause/skip buttons driven by `MediaController.transportControls`.
-4. **Notification flash** — as before; it never interrupts a live mode.
+   active sessions of any app. With several sessions at once it shows the
+   most relevant one: a PLAYING session always wins; within a group the most
+   recently active one wins, measured by
+   `PlaybackState.lastPositionUpdateTime`; only when nothing plays does it
+   fall back to paused sessions (so a just-paused player stays resumable).
+   While something plays, the compact pill shows album art + an animated
+   waveform; tapping expands to title/artist + real play/pause/skip buttons
+   driven by `MediaController.transportControls` (also exposed to Flutter as
+   `mediaPlayPause` / `mediaNext` / `mediaPrev` method calls). Metadata,
+   position/duration and a PNG byte copy of the art are pushed to the in-app
+   mirror over the `media_events` EventChannel whenever the native
+   callbacks fire — never polled, never persisted.
+4. **Notification flash** — a *temporary interrupt*: it briefly shows on top
+   of any live persistent mode, then the pill reverts to the persistent state
+   underneath (media/call/timer are never lost). Among persistent modes the
+   priority is call > timer > media.
 
 Tap a persistent pill to expand/collapse its detail view. Expand/collapse use
 a spring-like `PathInterpolator(0.34, 1.56, 0.64, 1)` (mirrored in Dart by
@@ -230,9 +242,10 @@ the real feature depends on it.
 
 | Channel | Direction | Payload |
 |---|---|---|
-| `service` | Dart → native | getStatus, setEnabled, open *settings deep-links, fireTestAlert, request*Permission, startCountdown, startStopwatch, stopTimer |
+| `service` | Dart → native | getStatus, setEnabled, open *settings deep-links, fireTestAlert, request*Permission, startCountdown, startStopwatch, stopTimer, mediaPlayPause, mediaNext, mediaPrev |
 | `status_events` | native → Dart | `"status"` ping (UI re-reads flags) |
 | `alert_events` | native → Dart | transient alert preview while the app UI is open (icon intentionally stays native) |
+| `media_events` | native → Dart | live media preview (title/artist/art PNG bytes/playing/position/duration), pushed on MediaController callbacks; `null` when idle |
 
 **Why MethodChannel for commands but EventChannel for alerts?**
 A `MethodChannel` is request/response: Dart invokes a method and awaits one

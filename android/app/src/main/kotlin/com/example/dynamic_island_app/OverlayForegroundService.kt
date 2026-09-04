@@ -40,12 +40,15 @@ import kotlin.math.sin
 /**
  * Foreground service that owns the floating "island" window.
  *
- * The pill is a single unified component with several modes, resolved by
- * priority (call > timer > media > notification flash > idle):
+ * The pill is a single unified component with several modes. Persistent
+ * modes resolve by priority (call > timer > media > idle); a notification
+ * FLASH is a TEMPORARY interrupt that shows on top of any persistent mode
+ * and reverts to it when the flash collapses (touches pass through while
+ * flashing):
  *  - IDLE:  pure-black compact capsule blended into the punch-hole camera,
  *           touches pass straight through (FLAG_NOT_TOUCHABLE).
  *  - FLASH: a captured notification expands the pill briefly, then it
- *           collapses (touches still pass through).
+ *           collapses back to whatever persistent mode was underneath.
  *  - MEDIA: persistent compact view (album art + animated waveform) while a
  *           media session of any app is playing; tap expands to title/artist
  *           + real play/pause/skip transport controls (MediaController).
@@ -118,6 +121,7 @@ class OverlayForegroundService : Service() {
     private var compactHeightPx = 0
 
     private var mode = Mode.IDLE
+    private var lastPersistent: Mode? = null
     private var userExpanded = false
     private var currentAlert: NotificationAlert? = null
 
@@ -516,11 +520,18 @@ class OverlayForegroundService : Service() {
         }
     }
 
+    private fun Mode.isPersistent(): Boolean =
+        this == Mode.MEDIA || this == Mode.CALL || this == Mode.TIMER
+
+    /**
+     * A flash interrupts any persistent mode; when it ends the pill reverts
+     * to the highest-priority persistent state still active underneath.
+     */
     private fun targetMode(): Mode = when {
+        currentAlert != null -> Mode.FLASH
         DynamicIsland.callStartedAtElapsedMs != null -> Mode.CALL
         DynamicIsland.timerState != null -> Mode.TIMER
         DynamicIsland.mediaState != null -> Mode.MEDIA
-        currentAlert != null -> Mode.FLASH
         else -> Mode.IDLE
     }
 
@@ -542,8 +553,6 @@ class OverlayForegroundService : Service() {
             main.post { showAlert(alert) }
             return
         }
-        if (DynamicIsland.hasPersistentMode()) return // priority: flash is last
-
         rootView ?: return
         main.removeCallbacks(hideRunnable)
         cancelAnimations()
@@ -572,7 +581,13 @@ class OverlayForegroundService : Service() {
         val params = windowParams ?: return
 
         val newMode = targetMode()
-        if (newMode != mode && newMode != Mode.FLASH) userExpanded = false
+        // Keep the user's expand/collapse choice for a persistent mode alive
+        // across a flash interrupt; reset it only when the persistent mode
+        // itself changes (e.g. media -> call).
+        if (newMode.isPersistent()) {
+            if (lastPersistent != newMode) userExpanded = false
+            lastPersistent = newMode
+        }
         val previous = mode
         mode = newMode
 
