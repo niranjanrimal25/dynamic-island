@@ -202,11 +202,11 @@ at the same time the highest priority wins the screen:
    survive a process restart) and ticks live in the pill.
 3. **Media** — `IslandMediaTracker` uses `MediaSessionManager`
    (gated behind the notification-access grant, no extra permission) to track
-   active sessions of any app. With several sessions at once it shows the
-   most relevant one: a PLAYING session always wins; within a group the most
-   recently active one wins, measured by
-   `PlaybackState.lastPositionUpdateTime`; only when nothing plays does it
-   fall back to paused sessions (so a just-paused player stays resumable).
+   active sessions of any app. Only sessions whose PlaybackState is PLAYING
+   qualify (paused/stopped sessions are ignored — many apps keep a paused
+   session registered forever, which would pin a permanent pill on screen);
+   among playing ones the most recently active wins, measured by
+   `PlaybackState.lastPositionUpdateTime`.
    While something plays, the compact pill shows album art + an animated
    waveform; tapping expands to title/artist + real play/pause/skip buttons
    driven by `MediaController.transportControls` (also exposed to Flutter as

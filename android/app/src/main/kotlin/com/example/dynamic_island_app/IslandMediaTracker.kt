@@ -116,23 +116,19 @@ object IslandMediaTracker {
      * Picks the session to show and publishes it.
      *
      * Selection logic (multiple simultaneous sessions are rare but possible):
-     *  1. A PLAYING session always beats a paused one — audible media is what
-     *     the island should mirror.
-     *  2. Within that group, the MOST RECENTLY ACTIVE session wins, measured
-     *     by PlaybackState.lastPositionUpdateTime (the elapsedRealtime of the
-     *     last position report — i.e. the session that last actually moved).
-     *  3. Only if nothing is playing do we fall back to paused sessions,
-     *     again most-recent first, so a just-paused player stays resumable
-     *     from the island.
+     *  - Only PLAYING sessions qualify: the island mirrors *active* playback.
+     *    Paused/stopped sessions are deliberately ignored — many apps keep a
+     *    paused session registered forever, which would otherwise pin a
+     *    permanent "music" pill on the screen (including right after every
+     *    unlock). When playback pauses or the session dies, mediaState goes
+     *    null and the island reverts to whatever else is active.
+     *  - Among playing sessions the MOST RECENTLY ACTIVE one wins, measured
+     *    by PlaybackState.lastPositionUpdateTime (the elapsedRealtime of the
+     *    last position report — i.e. the session that last actually moved).
      */
     private fun update(context: Context) {
-        val playing = controllers.filter {
-            it.playbackState?.state == PlaybackState.STATE_PLAYING
-        }
-        val paused = controllers.filter {
-            it.playbackState?.state == PlaybackState.STATE_PAUSED
-        }
-        val chosen = (playing.ifEmpty { paused })
+        val chosen = controllers
+            .filter { it.playbackState?.state == PlaybackState.STATE_PLAYING }
             .maxByOrNull { it.playbackState?.lastPositionUpdateTime ?: 0L }
 
         val state = chosen?.let { c ->
