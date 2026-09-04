@@ -89,7 +89,7 @@ class MediaPreview {
 ///              prev/play-pause/next controls that drive the real session
 ///  - flash:    a notification briefly interrupts whatever is showing
 ///              (including media), then the pill reverts to the persistent
-///              state underneath
+///              state underneath; starts compact then auto-expands after 500ms
 ///  - springs:  expand uses an overshooting curve (iOS-island feel)
 class IslandPreview extends StatefulWidget {
   const IslandPreview({super.key, this.previewStream, this.mediaStream});
@@ -114,7 +114,7 @@ class _IslandPreviewState extends State<IslandPreview>
   static const int _maxBodyLines = 4;
   static const double _mediaCompactW = 112;
   static const double _mediaCompactH = 44;
-  static const double _mediaExpandedH = 76;
+  static const double _mediaExpandedH = 120;
   static const Duration _animDuration = Duration(milliseconds: 220);
   static const Duration _baseHoldDuration = Duration(milliseconds: 4200);
 
@@ -145,6 +145,10 @@ class _IslandPreviewState extends State<IslandPreview>
   /// the native overlay's arming delay.
   bool _flashArmed = false;
 
+  /// Two-stage flash: starts compact (false) then auto-expands to true after 500ms.
+  bool _flashExpanded = false;
+  Timer? _flashExpandTimer;
+
   double _fromW = _compactW;
   double _fromH = _compactH;
   double _toW = _compactW;
@@ -159,14 +163,14 @@ class _IslandPreviewState extends State<IslandPreview>
     _t = CurvedAnimation(parent: _size, curve: Curves.easeOutBack);
     _alertSub = (widget.previewStream ?? NativeBridge.alertPreviews()).listen(
       _onAlert,
-      onError: (Object _, StackTrace __) {
+      onError: (Object e, StackTrace st) {
         // Ignore: in tests / before the native side is ready there is simply
         // no alert stream to listen to.
       },
     );
     _mediaSub = (widget.mediaStream ?? NativeBridge.mediaEvents()).listen(
       _onMedia,
-      onError: (Object _, StackTrace __) {
+      onError: (Object e, StackTrace st) {
         // Ignore: same as above.
       },
     );
@@ -186,7 +190,8 @@ class _IslandPreviewState extends State<IslandPreview>
   /// Picks the pill's target geometry for the current state.
   void _retarget() {
     if (_current != null) {
-      _animateTo(_expandedW, _flashHeight(_current!));
+      _animateTo(_flashExpanded ? _expandedW : 80,
+                 _flashExpanded ? _flashHeight(_current!) : 44);
     } else if (_media != null) {
       if (_mediaExpanded) {
         _animateTo(_expandedW, _mediaExpandedH);
@@ -201,26 +206,34 @@ class _IslandPreviewState extends State<IslandPreview>
   void _onAlert(Map<String, dynamic> map) {
     if (!mounted) return;
     final alert = AlertPreview.fromMap(map);
+    _flashExpandTimer?.cancel();
+    _armTimer?.cancel();
+    _hideTimer?.cancel();
     setState(() {
       _current = alert;
+      _flashExpanded = false;
       _flashArmed = false;
     });
     _retarget();
-    _armTimer?.cancel();
-    _armTimer = Timer(_animDuration, () {
-      if (mounted) setState(() => _flashArmed = true);
+
+    _flashExpandTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted || _current != alert) return;
+      setState(() => _flashExpanded = true);
+      _retarget();
+      _armTimer = Timer(_animDuration, () {
+        if (mounted) setState(() => _flashArmed = true);
+      });
     });
-    _hideTimer?.cancel();
-    // Longer notifications stay on screen longer so they can be read.
-    final hold = _baseHoldDuration +
+
+    final hold = const Duration(milliseconds: 500) +
+        _animDuration +
+        _baseHoldDuration +
         Duration(milliseconds: (alert.summary.length * 8).clamp(0, 4000));
     _hideTimer = Timer(hold, () {
       if (!mounted) return;
-      setState(() {
-        _current = null;
-        _flashArmed = false;
-      });
-      _retarget(); // revert to media/idle underneath
+      _flashExpandTimer?.cancel();
+      setState(() { _current = null; _flashExpanded = false; _flashArmed = false; });
+      _retarget();
     });
   }
 
@@ -232,6 +245,7 @@ class _IslandPreviewState extends State<IslandPreview>
     setState(() {
       _current = null;
       _flashArmed = false;
+      _flashExpanded = false;
     });
     _retarget();
     NativeBridge.openNotification(alert.key);
@@ -247,10 +261,18 @@ class _IslandPreviewState extends State<IslandPreview>
   }
 
   void _onTap() {
-    // A showing flash owns the tap (and only once armed/expanded); media
-    // mode keeps its own expand/collapse behavior underneath.
     if (_current != null) {
-      _onFlashTap();
+      if (!_flashExpanded) {
+        _flashExpandTimer?.cancel();
+        _armTimer?.cancel();
+        setState(() { _flashExpanded = true; _flashArmed = false; });
+        _retarget();
+        _armTimer = Timer(_animDuration, () {
+          if (mounted) setState(() => _flashArmed = true);
+        });
+      } else if (_flashArmed) {
+        _onFlashTap();
+      }
     } else if (_media != null) {
       setState(() => _mediaExpanded = !_mediaExpanded);
       _retarget();
@@ -275,8 +297,20 @@ class _IslandPreviewState extends State<IslandPreview>
     return h.clamp(_minFlashH, _maxFlashH).toDouble();
   }
 
+  /// Slide-in + fade-in animation wrapper for pill content.
+  Widget _withSlideIn(Widget child) {
+    return AnimatedBuilder(
+      animation: _t,
+      builder: (ctx, child2) => Transform.translate(
+        offset: Offset(0, (1 - _t.value).clamp(0.0, 1.0) * 8),
+        child: Opacity(opacity: _t.value.clamp(0.0, 1.0), child: child),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _flashExpandTimer?.cancel();
     _hideTimer?.cancel();
     _armTimer?.cancel();
     _alertSub?.cancel();
@@ -294,8 +328,7 @@ class _IslandPreviewState extends State<IslandPreview>
         builder: (context, _) {
           final double w = _nowW;
           final double h = _nowH;
-          final bool interactive =
-              _current != null || (_current == null && _media != null);
+          final bool interactive = _current != null || _media != null;
           return GestureDetector(
             onTap: interactive ? _onTap : null,
             child: ClipRRect(
@@ -305,9 +338,9 @@ class _IslandPreviewState extends State<IslandPreview>
                 height: h,
                 color: const Color(0xFF000000),
                 child: _current != null
-                    ? _flashContent(_current!)
+                    ? _withSlideIn(_flashContent(_current!))
                     : _media != null
-                        ? (_mediaExpanded
+                        ? _withSlideIn(_mediaExpanded
                             ? _mediaExpandedContent(_media!)
                             : _mediaCompactContent(_media!))
                         : null,
@@ -322,29 +355,39 @@ class _IslandPreviewState extends State<IslandPreview>
   // -- content variants ----------------------------------------------------
 
   Widget _flashContent(AlertPreview alert) {
+    if (!_flashExpanded) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: _AppIconBadge(appLabel: alert.appLabel),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(left: 10, right: 10),
       child: Row(
         children: [
-          _AppIconBadge(appLabel: alert.appLabel),
+          _AppIconBadge(appLabel: alert.appLabel, size: 36),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  alert.appLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: _labelStyle,
-                ),
-                Text(
-                  alert.summary,
-                  maxLines: _maxBodyLines,
-                  overflow: TextOverflow.ellipsis,
-                  style: _bodyStyle,
-                ),
+                Row(children: [
+                  Expanded(
+                    child: Text(alert.appLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: _labelStyle),
+                  ),
+                  const Text('just now',
+                      style: TextStyle(fontSize: 10, color: Color(0xFF6E6E76))),
+                ]),
+                Text(alert.summary,
+                    maxLines: _maxBodyLines,
+                    overflow: TextOverflow.ellipsis,
+                    style: _bodyStyle),
               ],
             ),
           ),
@@ -391,48 +434,35 @@ class _IslandPreviewState extends State<IslandPreview>
       padding: const EdgeInsets.only(left: 10, right: 6),
       child: Row(
         children: [
-          _art(media, 48),
+          _art(media, 56),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  media.title.isEmpty ? media.appLabel : media.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                ),
-                Text(
-                  media.artist.isEmpty ? media.appLabel : media.artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: _labelStyle,
-                ),
-                const SizedBox(height: 4),
+                Text(media.title.isEmpty ? media.appLabel : media.title,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 14,
+                                           fontWeight: FontWeight.w500)),
+                Text(media.artist.isEmpty ? media.appLabel : media.artist,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: _labelStyle),
+                const SizedBox(height: 6),
                 LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 2,
+                  value: progress, minHeight: 2,
                   backgroundColor: const Color(0xFF2A2A31),
-                  valueColor:
-                      const AlwaysStoppedAnimation<Color>(Color(0xFF7ED6DF)),
+                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7ED6DF)),
                 ),
               ],
             ),
           ),
-          _ControlButton(
-            icon: Icons.skip_previous,
-            onTap: () => NativeBridge.mediaPrev(),
-          ),
+          _ControlButton(icon: Icons.skip_previous, onTap: () => NativeBridge.mediaPrev()),
           _ControlButton(
             icon: media.playing ? Icons.pause : Icons.play_arrow,
             onTap: () => NativeBridge.mediaPlayPause(),
           ),
-          _ControlButton(
-            icon: Icons.skip_next,
-            onTap: () => NativeBridge.mediaNext(),
-          ),
+          _ControlButton(icon: Icons.skip_next, onTap: () => NativeBridge.mediaNext()),
         ],
       ),
     );
@@ -442,39 +472,29 @@ class _IslandPreviewState extends State<IslandPreview>
 /// Rounded avatar used by the flash mode. (The native overlay shows the
 /// real sender icon, which never leaves the native side.)
 class _AppIconBadge extends StatelessWidget {
-  const _AppIconBadge({required this.appLabel});
+  const _AppIconBadge({required this.appLabel, this.size = 32});
 
   final String appLabel;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     const List<Color> palette = [
-      Color(0xFF6C5CE7),
-      Color(0xFF00B894),
-      Color(0xFFE17055),
-      Color(0xFF0984E3),
-      Color(0xFFE84393),
-      Color(0xFF00CEC9),
+      Color(0xFF6C5CE7), Color(0xFF00B894), Color(0xFFE17055),
+      Color(0xFF0984E3), Color(0xFFE84393), Color(0xFF00CEC9),
     ];
-    final Color tint = palette[appLabel.hashCode.abs() % palette.length];
+    final tint = palette[appLabel.hashCode.abs() % palette.length];
     return Container(
-      width: 32,
-      height: 32,
+      width: size, height: size,
       decoration: BoxDecoration(
-        color: Color.alphaBlend(
-          tint.withValues(alpha: 0.22),
-          const Color(0xFF17171C),
-        ),
-        borderRadius: BorderRadius.circular(8),
+        color: Color.alphaBlend(tint.withValues(alpha: 0.22), const Color(0xFF17171C)),
+        borderRadius: BorderRadius.circular(size * 0.25),
       ),
       alignment: Alignment.center,
       child: Text(
         appLabel.isEmpty ? '?' : appLabel.substring(0, 1).toUpperCase(),
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 15,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(color: Colors.white, fontSize: size * 0.47,
+                         fontWeight: FontWeight.w600),
       ),
     );
   }
