@@ -121,7 +121,11 @@ class NotificationListener : NotificationListenerService() {
             cancelNotification(sbn.key)
         }
 
-        DynamicIsland.dispatchAlert(this, alert)
+        if (IslandNotificationClassifier.isLiveActivity(sbn)) {
+            DynamicIsland.dispatchAlert(this, alert)
+        } else {
+            DynamicIsland.dispatchBanner(this, alert)
+        }
     }
 
     override fun onNotificationRemoved(
