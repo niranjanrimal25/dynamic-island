@@ -180,7 +180,7 @@ object IslandSystemTracker {
     // ------------------------------------------------------------------
 
     private fun startOpsWatcher(app: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val aom = app.getSystemService(AppOpsManager::class.java) ?: return
         // GET_USAGE_STATS check: if not granted the call simply does nothing or throws
         val ops = arrayOf(AppOpsManager.OPSTR_CAMERA, AppOpsManager.OPSTR_RECORD_AUDIO)
@@ -202,7 +202,7 @@ object IslandSystemTracker {
     }
 
     private fun stopOpsWatcher(app: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val watcher = opsWatcher ?: return
         val aom = app.getSystemService(AppOpsManager::class.java) ?: return
         runCatching { aom.stopWatchingActive(watcher) }
