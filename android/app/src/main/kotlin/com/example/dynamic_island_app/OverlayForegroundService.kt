@@ -106,6 +106,20 @@ class OverlayForegroundService : Service() {
             private set
     }
 
+    // ------------------------------------------------------------------
+    // Banner + privacy stubs — filled in by Task 5/6.
+    // These exist now so DynamicIsland can call them without a compile error.
+    // ------------------------------------------------------------------
+
+    /** Show (or replace) the floating banner card below the island. Task 5. */
+    fun showBanner(alert: NotificationAlert) { /* TODO Task 5 */ }
+
+    /** Collapse a banner that matches [key]. Task 5. */
+    fun hideBannerForKey(key: String) { /* TODO Task 5 */ }
+
+    /** Re-draw the privacy indicator dot (camera / mic). Task 6. */
+    fun refreshPrivacyDot() { /* TODO Task 6 */ }
+
     private enum class Mode { IDLE, FLASH, UNLOCK, MEDIA, CALL, TIMER }
 
     private val main = Handler(Looper.getMainLooper())

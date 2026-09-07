@@ -58,6 +58,15 @@ class TimerState(
     val durationMs: Long = 0L
 )
 
+/** What the island shows during a brief system-hardware flash. RAM only. */
+data class SystemStateEvent(
+    val iconRes: Int,
+    val label: String,
+    val bodyText: String,
+    val accentColor: Int,   // ARGB tint applied to the icon
+    val holdMs: Long
+)
+
 /**
  * App-wide wiring for the Isle dynamic-island feature.
  *
@@ -103,6 +112,22 @@ object DynamicIsland {
     /** Running countdown/stopwatch started from the app UI. */
     @Volatile
     var timerState: TimerState? = null
+
+    /** Banner notification queued while the banner view is already showing. */
+    @Volatile
+    var pendingBanner: NotificationAlert? = null
+
+    /** The system-state event currently flashing in the island (RAM only). */
+    @Volatile
+    var currentSystemState: SystemStateEvent? = null
+
+    /** Privacy: true while any app actively uses the camera. */
+    @Volatile
+    var cameraActive: Boolean = false
+
+    /** Privacy: true while any app actively uses the microphone. */
+    @Volatile
+    var micActive: Boolean = false
 
     fun hasPersistentMode(): Boolean =
         callStartedAtElapsedMs != null || timerState != null || mediaState != null
@@ -223,9 +248,32 @@ object DynamicIsland {
     private var mediaSink: EventChannel.EventSink? = null
     @Volatile private var timerSink: EventChannel.EventSink? = null
     @Volatile private var callSink: EventChannel.EventSink? = null
+    @Volatile private var bannerSink: EventChannel.EventSink? = null
+    @Volatile private var privacySink: EventChannel.EventSink? = null
 
     fun setTimerSink(sink: EventChannel.EventSink?) { timerSink = sink }
     fun setCallSink(sink: EventChannel.EventSink?) { callSink = sink }
+    fun setBannerSink(sink: EventChannel.EventSink?) { bannerSink = sink }
+    fun setPrivacySink(sink: EventChannel.EventSink?) { privacySink = sink }
+
+    fun forwardBannerState(alert: NotificationAlert?) {
+        val sink = bannerSink ?: return
+        val payload: Map<String, Any?>? = if (alert == null) null else mapOf(
+            "key"      to alert.key,
+            "appLabel" to alert.appLabel,
+            "title"    to alert.title,
+            "text"     to alert.text
+        )
+        mainHandler.post { sink.success(payload) }
+    }
+
+    fun forwardPrivacyState() {
+        val sink = privacySink ?: return
+        val cam = cameraActive; val mic = micActive
+        val payload: Map<String, Boolean>? =
+            if (!cam && !mic) null else mapOf("camera" to cam, "microphone" to mic)
+        mainHandler.post { sink.success(payload) }
+    }
 
     fun forwardTimerState() {
         val sink = timerSink ?: return
@@ -431,9 +479,50 @@ object DynamicIsland {
         startOverlayService(context)
     }
 
+    /**
+     * Entry point for banner-worthy notifications (message, email, social, etc.).
+     * These never enter the island; they show in the floating dark card below it.
+     */
+    fun dispatchBanner(context: Context, alert: NotificationAlert) {
+        if (!isOverlayEnabled(context)) return
+        storeContentIntent(alert.key, alert.contentIntent)
+        forwardAlertPreview(alert)         // mirrors to Flutter preview alert stream
+        forwardBannerState(alert)          // new banner stream for BannerPreview widget
+        OverlayForegroundService.instance?.showBanner(alert) ?: run {
+            pendingBanner = alert
+            if (canDrawOverlays(context)) startOverlayService(context)
+        }
+    }
+
+    /** Banner notification dismissed (swiped or tapped) — collapse immediately. */
+    fun onBannerRemoved(context: Context, key: String) {
+        if (!isOverlayEnabled(context)) return
+        if (pendingBanner?.key == key) pendingBanner = null
+        OverlayForegroundService.instance?.hideBannerForKey(key)
+    }
+
+    /**
+     * Called by [IslandSystemTracker] whenever a hardware event fires
+     * (charging, battery low, ringer mode change, DND change).
+     */
+    fun onSystemStateChanged(event: SystemStateEvent?) {
+        currentSystemState = event
+        OverlayForegroundService.instance?.refresh()
+        notifyStatusChanged()
+    }
+
+    /** Called by [IslandSystemTracker] whenever camera/mic active state changes. */
+    fun onPrivacyChanged(camera: Boolean, mic: Boolean) {
+        cameraActive = camera
+        micActive = mic
+        OverlayForegroundService.instance?.refreshPrivacyDot()
+        forwardPrivacyState()
+    }
+
     /** Notification dismissed by the user or the app in the shade. */
     fun onNotificationRemoved(context: Context, key: String) {
         if (!isOverlayEnabled(context)) return
         OverlayForegroundService.instance?.onAlertRemoved(key)
+        onBannerRemoved(context, key)
     }
 }
