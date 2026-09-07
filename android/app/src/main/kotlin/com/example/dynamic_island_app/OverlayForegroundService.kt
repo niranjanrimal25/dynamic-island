@@ -121,6 +121,7 @@ class OverlayForegroundService : Service() {
         currentBannerKey = alert.key
 
         // Populate content
+        bannerIconView?.setImageDrawable(null)
         bannerIconView?.setImageDrawable(alert.icon)
         bannerAppLabelView?.text = alert.appLabel
         bannerTimestampView?.text = "just now"
@@ -666,11 +667,11 @@ class OverlayForegroundService : Service() {
         // horizontally centered, vertically centered on the camera cutout.
         // Re-applied after rotation / cutout changes.
         root.setOnApplyWindowInsetsListener { _, insets ->
+            val newIslandY = islandTopY(insets)
             windowParams?.let {
-                it.y = islandTopY(insets)
+                it.y = newIslandY
                 windowManager?.updateViewLayout(root, it)
             }
-            val newIslandY = islandTopY(insets)
             islandBottomY = newIslandY + compactHeightPx + dp(8)
             bannerParams?.let { bp ->
                 bp.y = islandBottomY
