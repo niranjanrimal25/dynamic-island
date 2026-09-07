@@ -112,10 +112,81 @@ class OverlayForegroundService : Service() {
     // ------------------------------------------------------------------
 
     /** Show (or replace) the floating banner card below the island. Task 5. */
-    fun showBanner(alert: NotificationAlert) { /* TODO Task 5 */ }
+    fun showBanner(alert: NotificationAlert) {
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { showBanner(alert) }; return }
+        bannerRootView ?: return
+        // Cancel any pending hide
+        bannerHideRunnable?.let { main.removeCallbacks(it) }
+        currentBannerKey?.let { DynamicIsland.dropContentIntent(it) }
+        currentBannerKey = alert.key
+
+        // Populate content
+        bannerIconView?.setImageDrawable(alert.icon)
+        bannerAppLabelView?.text = alert.appLabel
+        bannerTimestampView?.text = "just now"
+        bannerBodyView?.text = alert.text.ifBlank { alert.title }
+
+        // Make touchable
+        bannerParams?.let { bp ->
+            bp.flags = baseFlags()
+            bannerRootView?.let { runCatching { windowManager?.updateViewLayout(it, bp) } }
+        }
+
+        // Animate in: slide down from -72dp + fade
+        bannerRootView?.let { bv ->
+            bv.translationY = -dp(72).toFloat()
+            bv.alpha = 0f
+            val set = AnimatorSet()
+            set.playTogether(
+                ObjectAnimator.ofFloat(bv, "translationY", -dp(72).toFloat(), 0f),
+                ObjectAnimator.ofFloat(bv, "alpha", 0f, 1f)
+            )
+            set.duration = 220L
+            set.interpolator = springExpand
+            set.start()
+        }
+        bannerVisible = true
+
+        val holdMs = 3000L + (alert.text.length * 8L).coerceAtMost(2000L)
+        val hideR = Runnable { hideBannerNow() }
+        bannerHideRunnable = hideR
+        main.postDelayed(hideR, holdMs)
+    }
 
     /** Collapse a banner that matches [key]. Task 5. */
-    fun hideBannerForKey(key: String) { /* TODO Task 5 */ }
+    fun hideBannerForKey(key: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { hideBannerForKey(key) }; return
+        }
+        if (currentBannerKey == key) hideBannerNow()
+    }
+
+    private fun hideBannerNow() {
+        val bv = bannerRootView ?: return
+        bannerHideRunnable?.let { main.removeCallbacks(it) }
+        bannerHideRunnable = null
+        val set = AnimatorSet()
+        set.playTogether(
+            ObjectAnimator.ofFloat(bv, "translationY", 0f, -dp(40).toFloat()),
+            ObjectAnimator.ofFloat(bv, "alpha", bv.alpha, 0f)
+        )
+        set.duration = 180L
+        set.interpolator = easeCollapse
+        set.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) {
+                currentBannerKey?.let { DynamicIsland.dropContentIntent(it) }
+                currentBannerKey = null
+                bannerVisible = false
+                bannerIconView?.setImageDrawable(null)
+                bannerParams?.let { bp ->
+                    bp.flags = baseFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    bannerRootView?.let { runCatching { windowManager?.updateViewLayout(it, bp) } }
+                }
+                DynamicIsland.forwardBannerState(null)
+            }
+        })
+        set.start()
+    }
 
     /** Re-draw the privacy indicator dot (camera / mic). Task 6. */
     fun refreshPrivacyDot() { /* TODO Task 6 */ }
@@ -184,6 +255,18 @@ class OverlayForegroundService : Service() {
     private var eqAnimator: ValueAnimator? = null
     private var unlockPulse: ValueAnimator? = null
     private var tickerOn = false
+
+    // Banner sub-view (dark card below the island for non-live notifications)
+    private var bannerRootView: LinearLayout? = null
+    private var bannerParams: WindowManager.LayoutParams? = null
+    private var bannerIconView: ImageView? = null
+    private var bannerAppLabelView: TextView? = null
+    private var bannerBodyView: TextView? = null
+    private var bannerTimestampView: TextView? = null
+    private var bannerHideRunnable: Runnable? = null
+    private var currentBannerKey: String? = null
+    private var bannerVisible = false
+    private var islandBottomY = 0          // updated in insets callback
 
     /** True between ACTION_USER_PRESENT and the end of the flourish. */
     private var unlockActive = false
@@ -270,6 +353,10 @@ class OverlayForegroundService : Service() {
         DynamicIsland.pendingAlert?.let { pending ->
             DynamicIsland.pendingAlert = null
             showAlert(pending)
+        }
+        DynamicIsland.pendingBanner?.let { pending ->
+            DynamicIsland.pendingBanner = null
+            showBanner(pending)
         }
         // An explicit empty start (e.g. after a settings-screen restart request)
         // simply keeps the service alive and shows the idle compact pill.
@@ -583,11 +670,98 @@ class OverlayForegroundService : Service() {
                 it.y = islandTopY(insets)
                 windowManager?.updateViewLayout(root, it)
             }
+            val newIslandY = islandTopY(insets)
+            islandBottomY = newIslandY + compactHeightPx + dp(8)
+            bannerParams?.let { bp ->
+                bp.y = islandBottomY
+                bannerRootView?.let { bv -> runCatching { windowManager?.updateViewLayout(bv, bp) } }
+            }
             insets
         }
 
         // Idle: a plain black capsule around the camera — no content.
         setContentAlpha(0f)
+        createBannerView()
+    }
+
+    private fun createBannerView() {
+        val iconV = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
+            background = roundedRectBackground(0x00000000, dp(8))
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+        }
+        val appLabel = TextView(this).apply {
+            textSize = 11f
+            setTextColor(0xFF9E9EA7.toInt())
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        val timestamp = TextView(this).apply {
+            textSize = 10f
+            setTextColor(0xFF6E6E76.toInt())
+            maxLines = 1
+            gravity = Gravity.END
+        }
+        val labelRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            addView(appLabel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(timestamp)
+        }
+        val body = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFFFFFFFF.toInt())
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        val textCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
+                marginStart = dp(10)
+            }
+            addView(labelRow)
+            addView(body)
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedRectBackground(0xFF000000.toInt(), dp(20))
+            setPadding(dp(10), dp(0), dp(10), dp(0))
+            clipToOutline = true
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            addView(iconV)
+            addView(textCol)
+            setOnClickListener { currentBannerKey?.let { k -> DynamicIsland.openAlert(k) } }
+            alpha = 0f
+        }
+
+        bannerIconView = iconV
+        bannerAppLabelView = appLabel
+        bannerTimestampView = timestamp
+        bannerBodyView = body
+        bannerRootView = root
+
+        val bParams = WindowManager.LayoutParams(
+            dp(300), dp(72),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            baseFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = dp(200)     // provisional; updated in insets callback
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = cutoutModeForSdk()
+            }
+        }
+        bannerParams = bParams
+        windowManager?.addView(root, bParams)
     }
 
     private fun baseFlags(): Int =
@@ -1335,6 +1509,9 @@ class OverlayForegroundService : Service() {
         } catch (_: Exception) {
             // view already removed
         }
+        runCatching { bannerRootView?.let { windowManager?.removeView(it) } }
+        bannerRootView = null
+        bannerParams = null
         rootView = null
         windowManager = null
         windowParams = null
