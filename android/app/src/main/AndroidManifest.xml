@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ================================================================
          DYNAMIC ISLAND (personal, Android-only) — permissions
@@ -44,6 +45,12 @@
          revocable at any time; without it the call-timer mode simply
          stays inactive. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+
+    <!-- Optional: monitors camera/mic usage across apps for privacy dot indicator.
+         Requires user to grant "Usage access" in Settings > Apps > Special app access.
+         The privacy dot simply stays hidden if this is not granted. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions"/>
 
     <application
         android:label="Isle"
