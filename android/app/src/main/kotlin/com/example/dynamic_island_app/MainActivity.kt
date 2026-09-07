@@ -1,6 +1,7 @@
 package com.example.dynamic_island_app
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -69,6 +70,12 @@ class MainActivity : FlutterActivity() {
                 }
                 "openNotificationAccessSettings" -> {
                     val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    runCatching { startActivity(intent) }
+                    result.success(null)
+                }
+                "openUsageAccessSettings" -> {
+                    val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     runCatching { startActivity(intent) }
                     result.success(null)
@@ -265,6 +272,28 @@ class MainActivity : FlutterActivity() {
             }
             override fun onCancel(arguments: Any?) = DynamicIsland.setCallSink(null)
         })
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.dynamic_island_app/banner_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                DynamicIsland.setBannerSink(events)
+                DynamicIsland.forwardBannerState(null)
+            }
+            override fun onCancel(arguments: Any?) = DynamicIsland.setBannerSink(null)
+        })
+
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.dynamic_island_app/privacy_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                DynamicIsland.setPrivacySink(events)
+                DynamicIsland.forwardPrivacyState()
+            }
+            override fun onCancel(arguments: Any?) = DynamicIsland.setPrivacySink(null)
+        })
     }
 
     private fun statusMap(): Map<String, Any?> {
@@ -292,8 +321,22 @@ class MainActivity : FlutterActivity() {
             "islandOnly" to DynamicIsland.isIslandOnlyEnabled(this),
             "timerActive" to (DynamicIsland.timerState != null),
             "callActive" to (DynamicIsland.callStartedAtElapsedMs != null),
-            "mediaActive" to (DynamicIsland.mediaState != null)
+            "mediaActive" to (DynamicIsland.mediaState != null),
+            "usageStatsGranted" to isUsageStatsGranted()
         )
+    }
+
+    private fun isUsageStatsGranted(): Boolean {
+        val aom = getSystemService(AppOpsManager::class.java) ?: return false
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            aom.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
+        } else {
+            @Suppress("DEPRECATION")
+            aom.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     override fun onRequestPermissionsResult(
@@ -329,6 +372,8 @@ class MainActivity : FlutterActivity() {
         DynamicIsland.setAlertSink(null)
         DynamicIsland.setTimerSink(null)
         DynamicIsland.setCallSink(null)
+        DynamicIsland.setBannerSink(null)
+        DynamicIsland.setPrivacySink(null)
         super.onDestroy()
     }
 }

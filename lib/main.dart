@@ -142,6 +142,8 @@ class _HomeScreenState extends State<HomeScreen>
                   const SizedBox(height: 16),
                   _buildLiveModesSection(),
                   const SizedBox(height: 16),
+                  _buildSystemStatesSection(),
+                  const SizedBox(height: 16),
                   _buildTestSection(),
                   const SizedBox(height: 16),
                   _buildPersistenceSection(),
@@ -424,6 +426,63 @@ class _HomeScreenState extends State<HomeScreen>
             text: 'Android never lets overlay windows cover a secure lock '
                 'screen (PIN/pattern/biometric) — the island appears again '
                 'the moment the phone is unlocked.',
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  // -- System hardware states ---------------------------------------------
+
+  Widget _buildSystemStatesSection() {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const ListTile(
+            leading: Icon(Icons.hardware_outlined),
+            title: Text('System hardware states'),
+            subtitle: Text(
+              'Brief island flashes for charging, low battery, ringer mode, '
+              'and Focus/DND changes. Always active when the overlay is running.',
+            ),
+          ),
+          _PermissionTile(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Privacy indicators',
+            subtitle: 'Shows an orange dot (microphone) or green dot (camera) '
+                'alongside the island when any app accesses them. Requires '
+                '"Usage access" — a special system permission.',
+            why: 'Android\'s AppOpsManager.startWatchingActive() can monitor '
+                'camera and microphone usage across all apps, but requires the '
+                '"Usage access" special permission (PACKAGE_USAGE_STATS). '
+                'Without it the privacy dots simply stay hidden — everything '
+                'else keeps working normally.',
+            whyActionLabel: 'Open Usage access settings',
+            granted: _status.usageStatsGranted,
+            grantedLabel: 'Active',
+            actionLabel: 'Enable',
+            onAction: () async {
+              await NativeBridge.openUsageAccessSettings();
+            },
+          ),
+          const _Bullet(
+            icon: Icons.battery_charging_full_outlined,
+            text: 'Charging connected or unplugged — brief green/white flash.',
+          ),
+          const _Bullet(
+            icon: Icons.battery_alert_outlined,
+            text: 'Low battery at 20% (yellow) and 10% (red).',
+          ),
+          const _Bullet(
+            icon: Icons.volume_off_outlined,
+            text: 'Silent / Vibrate / Ring toggle — 2-second flash.',
+          ),
+          const _Bullet(
+            icon: Icons.do_not_disturb_on_outlined,
+            text: 'Focus Mode / Do Not Disturb on or off — 2-second flash.',
           ),
           const SizedBox(height: 8),
         ],

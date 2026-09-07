@@ -20,6 +20,7 @@ class IslandStatus {
     this.unlockFlourish = false,
     this.dismissOverlayWarning = true,
     this.islandOnly = true,
+    this.usageStatsGranted = false,
   });
 
   factory IslandStatus.fromMap(Map<dynamic, dynamic> map) {
@@ -38,6 +39,7 @@ class IslandStatus {
       unlockFlourish: b('unlockFlourish'),
       dismissOverlayWarning: b('dismissOverlayWarning'),
       islandOnly: (map['islandOnly'] as bool?) ?? true,
+      usageStatsGranted: b('usageStatsGranted'),
     );
   }
 
@@ -67,6 +69,9 @@ class IslandStatus {
   /// from the system shade (default on).
   final bool islandOnly;
 
+  /// PACKAGE_USAGE_STATS granted — enables camera/mic privacy indicators.
+  final bool usageStatsGranted;
+
   bool get allSetupDone =>
       overlayEnabled &&
       canDrawOverlays &&
@@ -95,6 +100,10 @@ class NativeBridge {
       EventChannel('com.example.dynamic_island_app/timer_events');
   static const EventChannel _callEvents =
       EventChannel('com.example.dynamic_island_app/call_events');
+  static const EventChannel _bannerEvents =
+      EventChannel('com.example.dynamic_island_app/banner_events');
+  static const EventChannel _privacyEvents =
+      EventChannel('com.example.dynamic_island_app/privacy_events');
 
   static Future<IslandStatus> fetchStatus() async {
     final map = await _service.invokeMapMethod<dynamic, dynamic>('getStatus');
@@ -203,4 +212,25 @@ class NativeBridge {
   static Future<void> mediaNext() => _service.invokeMethod<void>('mediaNext');
 
   static Future<void> mediaPrev() => _service.invokeMethod<void>('mediaPrev');
+
+  /// Opens the system "Usage access" settings page so the user can grant
+  /// PACKAGE_USAGE_STATS (required for camera/mic privacy indicators).
+  static Future<void> openUsageAccessSettings() =>
+      _service.invokeMethod<void>('openUsageAccessSettings');
+
+  /// Live banner-state events pushed from the native side whenever a hardware
+  /// banner (charging, ringer, DND/Focus) fires or clears. Emits null when
+  /// no banner is active. In-memory only.
+  static Stream<Map<String, dynamic>?> bannerEvents() =>
+      _bannerEvents.receiveBroadcastStream().map(
+            (e) => (e as Map?)?.cast<String, dynamic>(),
+          );
+
+  /// Live privacy-indicator events (camera/microphone in-use state) pushed
+  /// from AppOpsManager.startWatchingActive(). Emits null when both are idle.
+  /// Requires PACKAGE_USAGE_STATS. In-memory only.
+  static Stream<Map<String, dynamic>?> privacyEvents() =>
+      _privacyEvents.receiveBroadcastStream().map(
+            (e) => (e as Map?)?.cast<String, dynamic>(),
+          );
 }
