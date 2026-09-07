@@ -496,7 +496,6 @@ object DynamicIsland {
 
     /** Banner notification dismissed (swiped or tapped) — collapse immediately. */
     fun onBannerRemoved(context: Context, key: String) {
-        if (!isOverlayEnabled(context)) return
         if (pendingBanner?.key == key) pendingBanner = null
         OverlayForegroundService.instance?.hideBannerForKey(key)
     }
