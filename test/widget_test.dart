@@ -16,7 +16,13 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: Center(
-            child: IslandPreview(previewStream: controller.stream),
+            child: IslandPreview(
+              previewStream: controller.stream,
+              timerStream: Stream.empty(),
+              callStream: Stream.empty(),
+              bannerStream: Stream.empty(),
+              privacyStream: Stream.empty(),
+            ),
           ),
         ),
       ),
