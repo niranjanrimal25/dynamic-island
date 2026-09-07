@@ -98,6 +98,8 @@ class IslandPreview extends StatefulWidget {
     this.mediaStream,
     this.timerStream,
     this.callStream,
+    this.bannerStream,
+    this.privacyStream,
   });
 
   /// Overridable for tests; defaults to the live native alert stream.
@@ -111,6 +113,12 @@ class IslandPreview extends StatefulWidget {
 
   /// Overridable for tests; defaults to the live native call stream.
   final Stream<Map<String, dynamic>?>? callStream;
+
+  /// Overridable for tests; defaults to the live native banner stream.
+  final Stream<Map<String, dynamic>?>? bannerStream;
+
+  /// Overridable for tests; defaults to the live native privacy stream.
+  final Stream<Map<String, dynamic>?>? privacyStream;
 
   @override
   State<IslandPreview> createState() => _IslandPreviewState();
@@ -158,6 +166,10 @@ class _IslandPreviewState extends State<IslandPreview>
   bool _callExpanded = false;
   StreamSubscription<Map<String, dynamic>?>? _timerSub;
   StreamSubscription<Map<String, dynamic>?>? _callSub;
+  Map<String, dynamic>? _bannerData;
+  Map<String, dynamic>? _privacyData;
+  StreamSubscription<Map<String, dynamic>?>? _bannerSub;
+  StreamSubscription<Map<String, dynamic>?>? _privacySub;
 
   /// A flash becomes tappable (tap-to-open) only once expanded, mirroring
   /// the native overlay's arming delay.
@@ -206,6 +218,14 @@ class _IslandPreviewState extends State<IslandPreview>
         setState(() { _callData = data; if (data == null) _callExpanded = false; });
         if (_current == null) _retarget();
       },
+      onError: (Object _, StackTrace _) {},
+    );
+    _bannerSub = (widget.bannerStream ?? NativeBridge.bannerEvents()).listen(
+      (data) { if (mounted) setState(() => _bannerData = data); },
+      onError: (Object _, StackTrace _) {},
+    );
+    _privacySub = (widget.privacyStream ?? NativeBridge.privacyEvents()).listen(
+      (data) { if (mounted) setState(() => _privacyData = data); },
       onError: (Object _, StackTrace _) {},
     );
   }
@@ -353,50 +373,78 @@ class _IslandPreviewState extends State<IslandPreview>
     _mediaSub?.cancel();
     _timerSub?.cancel();
     _callSub?.cancel();
+    _bannerSub?.cancel();
+    _privacySub?.cancel();
     _size.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      label: 'Isle preview',
-      child: AnimatedBuilder(
-        animation: _t,
-        builder: (context, _) {
-          final double w = _nowW;
-          final double h = _nowH;
-          final bool interactive =
-              _current != null || _callData != null || _timerData != null || _media != null;
-          return GestureDetector(
-            onTap: interactive ? _onTap : null,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: Container(
-                width: w,
-                height: h,
-                color: const Color(0xFF000000),
-                child: _current != null
-                    ? _withSlideIn(_flashContent(_current!))
-                    : _callData != null
-                        ? _withSlideIn(_callExpanded
-                            ? _callExpandedContent(_callData!)
-                            : _callCompactContent(_callData!))
-                        : _timerData != null
-                            ? _withSlideIn(_timerExpanded
-                                ? _timerExpandedContent(_timerData!)
-                                : _timerCompactContent(_timerData!))
-                            : _media != null
-                                ? _withSlideIn(_mediaExpanded
-                                    ? _mediaExpandedContent(_media!)
-                                    : _mediaCompactContent(_media!))
-                                : null,
-              ),
+    final bool interactive =
+        _current != null || _callData != null || _timerData != null || _media != null;
+
+    return AnimatedBuilder(
+      animation: _t,
+      builder: (context, _) {
+        final double w = _nowW;
+        final double h = _nowH;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Semantics(
+                  label: 'Isle preview',
+                  child: GestureDetector(
+                    onTap: interactive ? _onTap : null,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: Container(
+                        width: w,
+                        height: h,
+                        color: const Color(0xFF000000),
+                        child: _islandContent(),
+                      ),
+                    ),
+                  ),
+                ),
+                if (_privacyData != null) ...[
+                  const SizedBox(width: 4),
+                  _PrivacyDot(data: _privacyData!),
+                ],
+              ],
             ),
-          );
-        },
-      ),
+            if (_bannerData != null) ...[
+              const SizedBox(height: 8),
+              _BannerCard(data: _bannerData!),
+            ],
+          ],
+        );
+      },
     );
+  }
+
+  Widget? _islandContent() {
+    if (_current != null) { return _withSlideIn(_flashContent(_current!)); }
+    if (_callData != null) {
+      return _withSlideIn(_callExpanded
+          ? _callExpandedContent(_callData!)
+          : _callCompactContent(_callData!));
+    }
+    if (_timerData != null) {
+      return _withSlideIn(_timerExpanded
+          ? _timerExpandedContent(_timerData!)
+          : _timerCompactContent(_timerData!));
+    }
+    if (_media != null) {
+      return _withSlideIn(_mediaExpanded
+          ? _mediaExpandedContent(_media!)
+          : _mediaCompactContent(_media!));
+    }
+    return null;
   }
 
   // -- content variants ----------------------------------------------------
@@ -747,4 +795,83 @@ class _TimerArcPainter extends CustomPainter {
   @override
   bool shouldRepaint(_TimerArcPainter o) =>
       o.progress != progress || o.arcColor != arcColor;
+}
+
+class _PrivacyDot extends StatelessWidget {
+  const _PrivacyDot({required this.data});
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool cam = data['camera'] == true;
+    final bool mic = data['microphone'] == true;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (cam)
+          Container(
+            width: 10, height: 10,
+            decoration: const BoxDecoration(
+              color: Color(0xFF30D158), shape: BoxShape.circle),
+          ),
+        if (cam && mic) const SizedBox(height: 3),
+        if (mic)
+          Container(
+            width: 10, height: 10,
+            decoration: const BoxDecoration(
+              color: Color(0xFFFF9F0A), shape: BoxShape.circle),
+          ),
+      ],
+    );
+  }
+}
+
+class _BannerCard extends StatelessWidget {
+  const _BannerCard({required this.data});
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final appLabel = (data['appLabel'] as String?) ?? '';
+    final title    = (data['title']    as String?) ?? '';
+    final text     = (data['text']     as String?) ?? '';
+    final body     = text.isNotEmpty ? text : title;
+    return Container(
+      width: 300,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF000000),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          _AppIconBadge(appLabel: appLabel, size: 36),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(children: [
+                  Expanded(
+                    child: Text(appLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 11, color: Color(0xFF9E9EA7))),
+                  ),
+                  const Text('just now',
+                      style: TextStyle(fontSize: 10, color: Color(0xFF6E6E76))),
+                ]),
+                Text(body,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, color: Colors.white)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
