@@ -190,9 +190,18 @@ class OverlayForegroundService : Service() {
     }
 
     /** Re-draw the privacy indicator dot (camera / mic). Task 6. */
-    fun refreshPrivacyDot() { /* TODO Task 6 */ }
+    fun refreshPrivacyDot() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { refreshPrivacyDot() }; return
+        }
+        val active = DynamicIsland.cameraActive || DynamicIsland.micActive
+        dotView?.let { dv ->
+            dv.visibility = if (active) View.VISIBLE else View.GONE
+            dv.invalidate()
+        }
+    }
 
-    private enum class Mode { IDLE, FLASH, UNLOCK, MEDIA, CALL, TIMER }
+    private enum class Mode { IDLE, FLASH, UNLOCK, MEDIA, CALL, TIMER, SYSTEM_STATE }
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -269,6 +278,10 @@ class OverlayForegroundService : Service() {
     private var bannerVisible = false
     private var islandBottomY = 0          // updated in insets callback
 
+    // Privacy dot: third WindowManager view (camera=green, mic=orange)
+    private var dotView: View? = null
+    private var dotParams: WindowManager.LayoutParams? = null
+
     /** True between ACTION_USER_PRESENT and the end of the flourish. */
     private var unlockActive = false
 
@@ -342,6 +355,7 @@ class OverlayForegroundService : Service() {
         registerReceiver(unlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
         IslandMediaTracker.start(this)
         IslandCallTracker.start(this)
+        IslandSystemTracker.start(this)
         refresh()
     }
 
@@ -382,6 +396,7 @@ class OverlayForegroundService : Service() {
         DynamicIsland.dropAllContentIntents()
         IslandMediaTracker.stop(this)
         IslandCallTracker.stop(this)
+        IslandSystemTracker.stop(this)
         removeWindow()
         super.onDestroy()
     }
@@ -677,12 +692,17 @@ class OverlayForegroundService : Service() {
                 bp.y = islandBottomY
                 bannerRootView?.let { bv -> runCatching { windowManager?.updateViewLayout(bv, bp) } }
             }
+            dotParams?.let { dp2 ->
+                dp2.y = newIslandY + (compactHeightPx - dp(12)) / 2
+                dotView?.let { dv -> runCatching { windowManager?.updateViewLayout(dv, dp2) } }
+            }
             insets
         }
 
         // Idle: a plain black capsule around the camera — no content.
         setContentAlpha(0f)
         createBannerView()
+        createPrivacyDotView()
     }
 
     private fun createBannerView() {
@@ -763,6 +783,53 @@ class OverlayForegroundService : Service() {
         }
         bannerParams = bParams
         windowManager?.addView(root, bParams)
+    }
+
+    private fun createPrivacyDotView() {
+        val dot = View(this).apply {
+            background = object : android.graphics.drawable.Drawable() {
+                override fun draw(canvas: android.graphics.Canvas) {
+                    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                    val cam = DynamicIsland.cameraActive
+                    val mic = DynamicIsland.micActive
+                    val r = bounds.width() / 2f
+                    if (cam && mic) {
+                        paint.color = 0xFF30D158.toInt()
+                        canvas.drawCircle(r, r * 0.45f, r * 0.45f, paint)
+                        paint.color = 0xFFFF9F0A.toInt()
+                        canvas.drawCircle(r, r * 1.55f, r * 0.45f, paint)
+                    } else {
+                        paint.color = if (cam) 0xFF30D158.toInt() else 0xFFFF9F0A.toInt()
+                        canvas.drawCircle(r, r, r, paint)
+                    }
+                }
+                override fun setAlpha(a: Int) {}
+                override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
+                @Suppress("OVERRIDE_DEPRECATION")
+                override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+            }
+            visibility = View.GONE
+        }
+
+        val dParams = WindowManager.LayoutParams(
+            dp(12), dp(24),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            baseFlags() or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            x = dp(36)     // offset right of island center (compactWidthPx/2 + 4dp gap)
+            y = dp(0)      // updated in insets callback
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = cutoutModeForSdk()
+            }
+        }
+        dotView = dot
+        dotParams = dParams
+        windowManager?.addView(dot, dParams)
     }
 
     private fun baseFlags(): Int =
@@ -890,6 +957,7 @@ class OverlayForegroundService : Service() {
         currentAlert != null -> Mode.FLASH
         unlockActive -> Mode.UNLOCK
         DynamicIsland.callStartedAtElapsedMs != null -> Mode.CALL
+        DynamicIsland.currentSystemState != null -> Mode.SYSTEM_STATE
         DynamicIsland.timerState != null -> Mode.TIMER
         DynamicIsland.mediaState != null -> Mode.MEDIA
         else -> Mode.IDLE
@@ -1001,6 +1069,11 @@ class OverlayForegroundService : Service() {
                 targetW = compactWidthPx
                 targetH = compactHeightPx
             }
+            Mode.SYSTEM_STATE -> {
+                applySystemStateContent()
+                targetW = dp(190)
+                targetH = dp(44)
+            }
             Mode.FLASH -> {
                 applyFlashContent()
                 if (flashExpanded) {
@@ -1093,6 +1166,27 @@ class OverlayForegroundService : Service() {
         controlsRow.visibility = View.GONE
         unlockView.visibility = View.VISIBLE
         startUnlockPulse()
+    }
+
+    private fun applySystemStateContent() {
+        val event = DynamicIsland.currentSystemState ?: return
+        iconView.visibility = View.VISIBLE
+        setIconSize(dp(22))
+        iconView.scaleType = ImageView.ScaleType.CENTER_INSIDE
+        iconView.imageTintList = ColorStateList.valueOf(event.accentColor)
+        iconView.setImageResource(event.iconRes)
+        textColumn.visibility = View.VISIBLE
+        labelRow.visibility = View.VISIBLE
+        appLabelView.text = event.label
+        appLabelView.visibility = View.VISIBLE
+        timestampView.visibility = View.GONE
+        bodyView.maxLines = 1
+        bodyView.textSize = 13f
+        bodyView.text = event.bodyText
+        eqContainer.visibility = View.GONE
+        controlsRow.visibility = View.GONE
+        mediaProgressBar.visibility = View.GONE
+        arcView.visibility = View.GONE
     }
 
     private fun applyFlashContent() {
@@ -1511,8 +1605,11 @@ class OverlayForegroundService : Service() {
             // view already removed
         }
         runCatching { bannerRootView?.let { windowManager?.removeView(it) } }
+        runCatching { dotView?.let { windowManager?.removeView(it) } }
         bannerRootView = null
         bannerParams = null
+        dotView = null
+        dotParams = null
         rootView = null
         windowManager = null
         windowParams = null
