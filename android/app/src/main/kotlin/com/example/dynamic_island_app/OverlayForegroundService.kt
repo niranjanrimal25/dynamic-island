@@ -1040,9 +1040,12 @@ class OverlayForegroundService : Service() {
         val isCallExpanded = newMode == Mode.CALL && userExpanded
         callAccentBar.visibility = if (isCallExpanded) View.VISIBLE else View.GONE
         rootView?.setPadding(if (isCallExpanded) 0 else dp(10), 0, dp(6), 0)
-        (iconView.layoutParams as? LinearLayout.LayoutParams)?.marginStart =
-            if (isCallExpanded) dp(10) else 0
-        iconView.requestLayout()
+        val newMarginStart = if (isCallExpanded) dp(10) else 0
+        val iconLp = iconView.layoutParams as? LinearLayout.LayoutParams
+        if (iconLp != null && iconLp.marginStart != newMarginStart) {
+            iconLp.marginStart = newMarginStart
+            iconView.requestLayout()
+        }
         // Keep the user's expand/collapse choice for a persistent mode alive
         // across a flash interrupt; reset it only when the persistent mode
         // itself changes (e.g. media -> call).
@@ -1385,7 +1388,8 @@ class OverlayForegroundService : Service() {
     }
 
     private fun updateEq() {
-        val show = mode == Mode.MEDIA && DynamicIsland.mediaState?.playing == true
+        // EQ bars only show in the COMPACT media view; expanded shows art+text+controls instead.
+        val show = mode == Mode.MEDIA && !userExpanded && DynamicIsland.mediaState?.playing == true
         eqContainer.visibility = if (show) View.VISIBLE else View.GONE
         if (show) startEq() else stopEq()
     }
