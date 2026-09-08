@@ -447,6 +447,7 @@ object DynamicIsland {
     fun stopOverlayService(context: Context) {
         // Drop anything held for a not-yet-running service (in-memory only).
         pendingAlert = null
+        pendingBanner = null
         context.applicationContext.stopService(
             Intent(context.applicationContext, OverlayForegroundService::class.java)
         )

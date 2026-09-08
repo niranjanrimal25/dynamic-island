@@ -957,9 +957,9 @@ class OverlayForegroundService : Service() {
         currentAlert != null -> Mode.FLASH
         unlockActive -> Mode.UNLOCK
         DynamicIsland.callStartedAtElapsedMs != null -> Mode.CALL
-        DynamicIsland.currentSystemState != null -> Mode.SYSTEM_STATE
         DynamicIsland.timerState != null -> Mode.TIMER
         DynamicIsland.mediaState != null -> Mode.MEDIA
+        DynamicIsland.currentSystemState != null -> Mode.SYSTEM_STATE
         else -> Mode.IDLE
     }
 
